@@ -1,0 +1,19 @@
+# Copy to docker-compose.override.yml for local changes. Compose merges it
+# into docker-compose.yml automatically, and git ignores it, so `git pull`
+# never conflicts with your edits.
+
+services:
+  # Keep your own audio (jingles, ads, the drop-in inbox) in a folder on the
+  # host instead of inside the Docker volume. Create it first and give it to
+  # the controller's user:  mkdir -p media && sudo chown -R 10000 media
+  controller:
+    volumes:
+      - ./media:/data/media
+  liquidsoap:
+    volumes:
+      - ./media:/data/media:ro
+
+  # Example: a different host port for the web UI.
+  # controller:
+  #   ports: !override
+  #     - "8090:8080"

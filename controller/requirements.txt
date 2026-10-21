@@ -1,0 +1,9 @@
+fastapi==0.156.8
+uvicorn==0.54.0
+httpx==0.28.1
+feedparser==6.0.14
+pyyaml==6.0.3
+pydantic==2.14.1
+tzdata==2026.5
+yt-dlp==2026.8.19
+python-multipart==0.0.32

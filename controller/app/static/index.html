@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pirate Radio</title>
+  <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <img class="logo" src="/static/logo.svg" alt="" width="28" height="28">
+      <span class="dot" id="live-dot"></span>
+      <h1 id="station-name">Pirate Radio</h1>
+    </div>
+    <nav id="nav" aria-label="Main">
+      <a href="#/home" data-view="home">Home</a>
+      <a href="#/schedule" data-view="schedule">Schedule</a>
+      <a href="#/sources" data-view="sources">Sources</a>
+      <a href="#/settings" data-view="settings">Settings</a>
+    </nav>
+  </header>
+
+  <audio id="player" preload="none"></audio>
+
+  <main>
+    <!-- HOME -->
+    <section id="view-home" class="view">
+      <div class="page-head">
+        <div>
+          <h2 class="page-title">Channels</h2>
+          <p class="muted">Each channel is its own radio with its own stream link. Open one to see why it plays what it plays.</p>
+        </div>
+        <button id="btn-new-channel">+ New channel</button>
+      </div>
+      <form id="form-channel" class="card add-card hidden">
+        <h3>New channel</h3>
+        <p class="muted small">A channel starts with the first channel's stations. Adding one restarts the audio engine for a few seconds.</p>
+        <div class="row gap">
+          <input name="name" placeholder="Name, e.g. Anna" required>
+          <input name="mount" placeholder="Stream name (optional), e.g. anna" pattern="[a-z0-9][a-z0-9_\-]{0,31}">
+          <button class="primary">Add channel</button>
+          <button type="button" data-close>Cancel</button>
+        </div>
+      </form>
+      <div class="channel-grid" id="channel-cards"></div>
+      <div class="card">
+        <div class="row between"><h3>Coming in</h3><span class="muted small">New uploads and episodes, with the channels they will cut into</span></div>
+        <ul class="list" id="incoming"></ul>
+        <div class="row end"><button id="btn-check" class="small-btn">Check sources now</button></div>
+      </div>
+    </section>
+
+    <!-- ONE CHANNEL -->
+    <section id="view-channel" class="view">
+      <div class="chip-row">
+        <a href="#/home" class="back">← All channels</a>
+        <span class="chips-nav" id="channel-chips"></span>
+      </div>
+      <div class="split">
+        <div class="split-main">
+          <div class="card onair">
+            <div class="np-head">
+              <button class="big-play" data-listen aria-label="Listen here">▶</button>
+              <div class="grow">
+                <div class="label" id="np-mode">Connecting…</div>
+                <div class="np-title" id="np-title">&nbsp;</div>
+                <div class="np-source" id="np-source"></div>
+              </div>
+              <img class="np-art hidden" id="np-art" alt="">
+            </div>
+            <div class="progress hidden" id="np-progress"><div id="np-bar"></div></div>
+            <div class="np-times hidden" id="np-times"><span id="np-elapsed"></span><span id="np-duration"></span></div>
+            <div class="row gap">
+              <button id="btn-skip" class="hidden">Skip clip</button>
+              <button id="btn-skip-song" class="hidden">Next song</button>
+            </div>
+
+            <h3 class="sub-head">Why this is playing</h3>
+            <div class="layers" id="why"></div>
+
+            <h3 class="sub-head">Station underneath</h3>
+            <div class="station-chips" id="station-chips" role="radiogroup" aria-label="Station"></div>
+          </div>
+
+          <div class="card">
+            <div class="row between"><h3>Today on <span data-channel-name></span></h3><a href="#/schedule" data-week>Week view</a></div>
+            <ul class="list rundown" id="rundown"></ul>
+          </div>
+
+          <details class="card">
+            <summary><h3>History</h3></summary>
+            <ul class="list compact" id="history"></ul>
+          </details>
+        </div>
+
+        <aside class="split-side">
+          <form id="form-play-url" class="card stack">
+            <h3>Cut in now</h3>
+            <label class="field">Video link or audio URL
+              <input name="url" placeholder="https://…" required>
+            </label>
+            <button>Play on <span data-channel-name></span></button>
+          </form>
+
+          <div class="card">
+            <div class="row between"><h3>Queue</h3><span class="muted small" id="queue-count"></span></div>
+            <ul class="list" id="queue"></ul>
+          </div>
+
+          <div class="card">
+            <h3>Listen elsewhere</h3>
+            <p class="muted small">Open in VLC, Home Assistant, a smart speaker or any radio app.</p>
+            <ul class="links" id="listen-links"></ul>
+            <p class="muted small" id="listeners"></p>
+          </div>
+
+          <details class="card">
+            <summary><h3>Channel settings</h3></summary>
+            <div class="stack" id="channel-settings"></div>
+          </details>
+        </aside>
+      </div>
+    </section>
+
+    <!-- SCHEDULE -->
+    <section id="view-schedule" class="view">
+      <div class="page-head">
+        <div class="row gap">
+          <h2 class="page-title">Schedule</h2>
+          <span class="chips-nav" id="schedule-chips"></span>
+        </div>
+        <div class="row gap">
+          <button id="btn-new-spot">+ Spot</button>
+          <button id="btn-new-program" class="primary">+ Program</button>
+        </div>
+      </div>
+      <div class="legend">
+        <span><i class="sw prog"></i>Program, fixed time</span>
+        <span><i class="sw title"></i>Program started by the stream title (may end earlier)</span>
+        <span><i class="sw spot"></i>Spot or news</span>
+        <span><i class="sw now"></i>Now</span>
+        <span>Everything else: the station, <strong id="legend-station">—</strong></span>
+      </div>
+      <div class="card timeline-box"><div class="timeline" id="timeline"></div></div>
+
+      <form class="card add-card hidden" id="form-program">
+        <h3>New program</h3>
+        <p class="muted small">Another stream or Navidrome playlist that takes over during a weekly time window. If a clip is already playing when the window opens, the clip finishes first.</p>
+        <div class="row gap">
+          <input name="name" placeholder="Name" required>
+          <div class="base-pick" data-base></div>
+        </div>
+        <div class="row gap">
+          <label class="inline">From <input name="start" type="time" value="07:00" required></label>
+          <label class="inline">to <input name="end" type="time" value="09:00" required></label>
+          <div class="days" data-days></div>
+        </div>
+        <div class="row gap"><button class="primary">Add program</button><button type="button" data-close>Cancel</button></div>
+      </form>
+
+      <div class="card">
+        <h3>Programs on <span data-channel-name></span></h3>
+        <p class="muted small">For shows without a fixed length, set <em>When</em> to the stream title: the program starts when the station's title matches your pattern and ends when it stops matching, with the window as the outer limit. Patterns are regular expressions and ignore case.</p>
+        <ul class="list" id="programs"></ul>
+      </div>
+
+      <div class="card hidden" id="spot-card">
+        <h3 id="spot-form-title">New spot</h3>
+        <form id="form-spot" class="spot-form">
+          <label>Name <input name="name" required placeholder="e.g. Hourly news, Station ID, Pizza ad"></label>
+          <fieldset>
+            <legend>What plays</legend>
+            <label class="check"><input type="radio" name="content" value="media" checked> My own files</label>
+            <label class="check"><input type="radio" name="content" value="feed"> Newest episode of a news or podcast feed</label>
+            <div data-for="media">
+              <div class="small muted">Pick files or whole folders (new files in a folder are included automatically). Upload files under <a href="#/sources/media">Sources › Own media</a>.</div>
+              <div class="file-pick" id="spot-files"></div>
+              <label class="inline">Order
+                <select name="order"><option value="rotate">In turn</option><option value="random">Random</option></select>
+              </label>
+            </div>
+            <div data-for="feed" class="hidden">
+              <input name="feed_url" type="url" placeholder="RSS feed URL, e.g. Tagesschau in 100 Sekunden">
+              <label class="check"><input type="checkbox" name="only_new" checked> Skip if there is no new episode since last time</label>
+            </div>
+            <div class="small muted">Picture while it plays: a feed uses its own cover. Set one here to use your own instead.</div>
+            <div id="spot-image"></div>
+          </fieldset>
+          <fieldset>
+            <legend>When</legend>
+            <label class="check"><input type="radio" name="trigger" value="every" checked> Every
+              <input name="every_minutes" type="number" min="1" max="1440" value="60" class="num"> minutes, at
+              <input name="offset_minutes" type="number" min="0" max="1439" value="0" class="num"> past (60 / 0 = on the hour)</label>
+            <label class="check"><input type="radio" name="trigger" value="times"> At
+              <input name="times" placeholder="07:00, 12:00, 18:30" class="grow"></label>
+            <label class="check"><input type="radio" name="trigger" value="songs"> After every
+              <input name="every_songs" type="number" min="1" value="4" class="num"> songs on the station</label>
+            <div class="days" data-days></div>
+            <label class="inline">Only between <input name="active_from" type="time" value="00:00"> and <input name="active_to" type="time" value="00:00"> <span class="small muted">(same time = all day)</span></label>
+          </fieldset>
+          <label class="check"><input type="checkbox" name="between_songs"> Wait for the end of the current song (up to 10 minutes)</label>
+          <label class="check"><input type="checkbox" name="during_programs" checked> Also play during scheduled programs</label>
+          <div class="row gap">
+            <button class="primary" id="spot-submit">Add spot</button>
+            <button type="button" id="spot-cancel">Cancel</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h3>Spots &amp; news on <span data-channel-name></span></h3>
+        <p class="muted small">Your own jingles and ads, or the newest episode of a news feed, cut in on a timer. Spots go before waiting clips and never cut off a clip that is playing.</p>
+        <ul class="list" id="spots"></ul>
+      </div>
+    </section>
+
+    <!-- SOURCES -->
+    <section id="view-sources" class="view">
+      <div class="page-head">
+        <div>
+          <h2 class="page-title">Sources</h2>
+          <p class="muted">Everything rRadio can play, in one list. Tick the channels each source feeds.</p>
+        </div>
+        <button id="btn-add-source" class="primary">+ Add source</button>
+      </div>
+
+      <div class="card add-card hidden" id="add-source">
+        <div class="row between"><h3>Add a source</h3><button type="button" class="small-btn" data-close>Close</button></div>
+        <div class="seg" id="add-kind" role="tablist">
+          <button type="button" data-kind="station" class="active">Radio station</button>
+          <button type="button" data-kind="navidrome">Navidrome</button>
+          <button type="button" data-kind="video">Video channel</button>
+          <button type="button" data-kind="podcast">Podcast</button>
+          <button type="button" data-kind="media">Own media</button>
+        </div>
+        <form id="form-station" data-add="station navidrome" class="stack">
+          <p class="muted small" data-hint="station">A radio stream that plays whenever nothing else is on. Pick it per channel under “Station underneath”.</p>
+          <p class="muted small hidden" data-hint="navidrome">Music from your Navidrome (set it up under Settings), played as a station.</p>
+          <div class="row gap">
+            <input name="name" placeholder="Name" required>
+            <input name="url" type="url" placeholder="Stream URL (https://…/stream.mp3)" required>
+            <select name="playlist" class="hidden"></select>
+            <label class="check hidden" data-shuffle><input type="checkbox" name="shuffle" checked> Shuffle</label>
+          </div>
+          <div class="chips" data-channel-ticks></div>
+          <div><button class="primary">Add station</button></div>
+        </form>
+        <form id="form-video" data-add="video" class="stack hidden">
+          <p class="muted small">New uploads are fetched through your Invidious instance and cut into the radio as audio. Videos that already exist when you add a channel are ignored.</p>
+          <div class="row gap"><input name="query" class="grow" placeholder="@handle, channel URL, channel ID or search term" required><button class="primary">Find &amp; add</button></div>
+        </form>
+        <form id="form-podcast" data-add="podcast" class="stack hidden">
+          <p class="muted small">New episodes from this RSS feed are cut into the radio. Episodes that already exist when you add it are ignored.</p>
+          <div class="row gap"><input name="url" class="grow" placeholder="RSS feed URL" type="url" required><button class="primary">Add podcast</button></div>
+        </form>
+        <form id="form-upload" data-add="media" class="stack hidden">
+          <p class="muted small">Jingles, station IDs, ads and announcements, shared by all channels. Use them in spots, or play one right away.</p>
+          <div class="row gap">
+            <input type="file" name="file" accept="audio/*,.mp3,.m4a,.ogg,.opus,.flac,.wav" multiple required>
+            <input name="folder" placeholder="Folder (optional, e.g. ads)" list="folder-list">
+            <datalist id="folder-list"></datalist>
+            <button class="primary">Upload</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="chips-nav" id="source-filters" aria-label="Filter by type"></div>
+
+      <div class="card table-box" id="source-table-box">
+        <table class="sources">
+          <thead id="source-head"></thead>
+          <tbody id="source-rows"></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="sources-note">Stations show up under “Station underneath” on each ticked channel. Video channels and podcasts cut in when something new arrives.</p>
+
+      <div class="card hidden" id="media-card">
+        <h3>Own media</h3>
+        <ul class="list" id="media"></ul>
+        <p class="small muted">Drop folder: any audio file put into <code>inbox/</code> in the media folder plays once on the first channel, or on a channel by its stream name in <code>inbox/&lt;stream name&gt;/</code>, and then moves to <code>played/</code>. Handy for Home Assistant announcements. See the README for mapping the media folder to a folder on your server.</p>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="view-settings" class="view">
+      <div class="card">
+        <h2>Settings</h2>
+        <form id="form-settings" class="settings">
+          <label>Station name <input name="station_name"></label>
+          <label>Time zone <input name="timezone" placeholder="Europe/Berlin"></label>
+          <label>Invidious URL
+            <span class="row gap"><input name="invidious_url" placeholder="http://invidious:3000"><button type="button" id="btn-test-inv">Test</button></span>
+            <span class="small" id="inv-result"></span>
+          </label>
+          <label>Check sources every (minutes) <input name="poll_minutes" type="number" min="1" step="1"></label>
+          <label>Ignore items older than (hours, 0 = no limit) <input name="max_age_hours" type="number" min="0" step="1"></label>
+          <fieldset class="formats">
+            <legend>Stream formats</legend>
+            <label class="check"><input type="checkbox" name="streams" value="mp3"> <span><strong>MP3</strong> 128 kbps · plays everywhere (VLC, browsers, Home Assistant, Sonos, car apps)</span></label>
+            <label class="check"><input type="checkbox" name="streams" value="aac"> <span><strong>AAC</strong> 96 kbps · same quality at less data, good for phones over Tailscale</span></label>
+            <label class="check"><input type="checkbox" name="streams" value="opus"> <span><strong>Opus</strong> 96 kbps · best quality per bit, but some speakers and cars can't play it</span></label>
+          </fieldset>
+          <label>Video audio quality
+            <select name="video_audio">
+              <option value="small">Small · Opus ~70 kbps · faster</option>
+              <option value="aac">Standard · AAC 128 kbps</option>
+            </select>
+            <span class="small muted">Small downloads about twice as fast and is fine for talk and news.</span>
+          </label>
+          <label class="check"><input name="cache_in_ram" type="checkbox"> Keep downloads in RAM instead of on disk (no SSD writes; clips are deleted after playing either way)</label>
+          <label class="check"><input name="ytdlp_fallback" type="checkbox"> Fall back to yt-dlp if Invidious can't deliver audio (contacts the video site directly)</label>
+          <fieldset class="formats">
+            <legend>Navidrome</legend>
+            <span class="small muted">For stations and programs that play your own music. Any Subsonic-compatible server works.</span>
+            <label>URL <input name="navidrome_url" placeholder="http://host.docker.internal:4533"></label>
+            <label>User <input name="navidrome_user" autocomplete="off"></label>
+            <label>Password <input name="navidrome_password" type="password" autocomplete="new-password" placeholder="or set NAVIDROME_PASSWORD in .env"></label>
+            <label>Quality
+              <select name="navidrome_bitrate">
+                <option value="128">MP3 128 kbps</option>
+                <option value="192">MP3 192 kbps</option>
+                <option value="320">MP3 320 kbps</option>
+                <option value="0">Original files (no transcoding)</option>
+              </select>
+            </label>
+            <span class="row gap"><button type="button" id="btn-test-nd">Test</button><span class="small" id="nd-result"></span></span>
+          </fieldset>
+          <button class="primary">Save settings</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Config file</h2>
+        <p class="muted">Everything here is stored in <code>config.yaml</code> in the data volume. You can edit it by hand; changes are picked up automatically.</p>
+        <a href="/api/config.yaml" class="button">Download config.yaml</a>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <div id="tl-pop" class="tl-pop hidden" role="dialog" aria-label="Details"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
