@@ -219,7 +219,7 @@ button.listen.playing { background: var(--accent); color: var(--accent-text); }
 .layer.clip .ldot, .ldot.clip { background: var(--clip); }
 .layer.prog .ldot, .ldot.prog { background: var(--accent); }
 .ldot.title { background: repeating-linear-gradient(135deg, var(--accent) 0 3px, var(--accent-line) 3px 6px); }
-.ldot.spot { background: var(--spot); }
+.ldot.spot, .layer.spot .ldot { background: var(--spot); }
 .layer.warn .ldot { background: var(--bad); }
 .station-chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .station-chip { min-height: 44px; }

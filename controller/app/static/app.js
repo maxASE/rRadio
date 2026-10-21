@@ -593,6 +593,12 @@ function renderWhy() {
         : "Nothing waiting. New uploads and episodes interrupt as soon as they are downloaded."));
   }
 
+  const spot = ((s.channels || []).find((c) => c.id === ch.id) || {}).next_spot;
+  layers.push(layer("spot", false, "Spots and news",
+    spot
+      ? `Next: ${spot.name} · ${whenLabel(spot.at)}.`
+      : ch.spots && ch.spots.length ? "None due in the next days." : "None picked for this channel."));
+
   const prog = np.program_id && ch.programs.find((p) => p.id === np.program_id);
   if (np.mode === "program" || (np.mode === "silence" && np.program_id)) {
     const why = np.by_title && prog
