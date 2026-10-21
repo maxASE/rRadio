@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import mimetypes
 import os
 import re
 import secrets
@@ -55,7 +56,7 @@ app = FastAPI(title="Pirate Radio", lifespan=lifespan, docs_url="/api/docs", red
 @app.middleware("http")
 async def basic_auth(request: Request, call_next):
     """Optional password for the UI. Playlist links and the logo stay open for players and dashboards."""
-    open_paths = ("/listen.", "/healthz", "/static/logo.svg", "/static/apple-touch-icon.png") + (("/api/widget",) if WIDGET_PUBLIC else ())
+    open_paths = ("/listen.", "/healthz", "/static/logo.svg", "/static/apple-touch-icon.png", "/api/art/now/") + (("/api/widget",) if WIDGET_PUBLIC else ())
     if UI_PASSWORD and not request.url.path.startswith(open_paths):
         ok = False
         auth = request.headers.get("authorization", "")
@@ -327,6 +328,31 @@ async def get_image(name: str):
         raise HTTPException(404, "no such picture")
     return FileResponse(p, headers={"Cache-Control": "private, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff",
                                     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox"})
+
+
+@app.get("/api/art/now/{channel}")
+async def art_now(channel: str):
+    """The picture of whatever plays right now on a channel (by id or mount; an
+    extension like .jpg is ignored), falling back to the rRadio logo. One fixed
+    link for players that show a station picture; open without the UI password."""
+    cid = re.sub(r"\.(jpe?g|png|gif|webp)$", "", channel)
+    ch = store.config.channel(cid) or next((c for c in store.config.channels if c.mount == cid), None)
+    if ch is None:
+        raise HTTPException(404, "unknown channel")
+    path = engine.now_playing(ch).get("art") or ""
+    image = None
+    if path.startswith("/api/images/"):
+        f = image_file(path.rsplit("/", 1)[-1])
+        if f:
+            image = (f.read_bytes(), mimetypes.guess_type(f.name)[0] or "application/octet-stream")
+    elif path.startswith("/api/art/"):
+        image = await engine.art.get(path.rsplit("/", 1)[-1])
+    if image is None:
+        image = ((STATIC / "apple-touch-icon.png").read_bytes(), "image/png")
+    data, ctype = image
+    headers = {"Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+               "X-Content-Type-Options": "nosniff"}
+    return Response(data, media_type=ctype, headers=headers)
 
 
 @app.get("/api/art/{key}", include_in_schema=False)
