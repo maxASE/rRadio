@@ -1354,7 +1354,8 @@ function renderSourcesTable(refresh = false) {
         el("div", { class: "src-name" },
           el("span", { class: `sdot ${latest.state}`, "aria-hidden": "true" }),
           artImg(previewOf(r.base?.image), "src-art"),
-          el("div", {}, el("strong", {}, r.name), el("div", { class: "muted small ellipsis" }, detail)))),
+          el("div", {}, el("strong", {}, r.name), el("div", { class: "muted small ellipsis" }, detail),
+            r.base?.image && status?.image_errors?.[r.base.image] ? el("div", { class: "small bad" }, `Logo didn't load: ${status.image_errors[r.base.image]}`) : null))),
       el("td", { class: "muted" }, TYPE_NAME[r.type]),
       el("td", { class: "muted small latest" }, latest.state === "bad" ? el("span", { class: "bad" }, latest.text) : latest.text, latest.checked ? el("div", {}, latest.checked) : null),
       ...cfg.channels.map((c) => el("td", { class: "center" },
@@ -1485,9 +1486,17 @@ function imageField(value, { label = "Picture", placeholder = "Picture URL (opti
   const show = () => {
     const v = input.value.trim();
     const src = previewOf(v);
-    preview.onerror = () => { preview.classList.add("hidden"); note.textContent = "That picture didn't load. Check the URL or upload the file."; };
+    const failed = (why) => {
+      preview.classList.add("hidden");
+      note.classList.add("bad");
+      note.textContent = `rRadio couldn't load this picture: ${why}. Check the address or upload the file instead.`;
+    };
+    preview.onerror = () => fetch(preview.src).then((r) => r.json()).then((d) => failed(d.detail || "unknown error"), () => failed("unknown error"));
     preview.onload = () => { preview.classList.remove("hidden"); };
-    if (src) { preview.src = src; note.textContent = ""; }
+    note.classList.remove("bad");
+    const err = status?.image_errors?.[v];
+    if (err) failed(err);
+    else if (src) { preview.src = src; note.textContent = ""; }
     else { preview.classList.add("hidden"); preview.removeAttribute("src"); note.textContent = v ? "Preview after saving." : ""; }
   };
   input.addEventListener("input", show);

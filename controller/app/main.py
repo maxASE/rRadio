@@ -334,7 +334,7 @@ async def art(key: str):
     """The picture for something on air, as handed out in /api/status."""
     image = await engine.art.get(key)
     if image is None:
-        raise HTTPException(404, "no picture")
+        raise HTTPException(404, engine.art.errors.get(key, "no picture"))
     data, ctype = image
     # Pictures come from elsewhere: never let one run script on this origin.
     headers = {"Cache-Control": "private, max-age=86400", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",

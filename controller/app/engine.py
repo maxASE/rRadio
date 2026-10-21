@@ -1001,6 +1001,7 @@ class Engine:
             "sources": self.source_state,
             "spots": self.spot_status(ch),
             "images": self.config_images(),
+            "image_errors": {u: e for u in self.config_images() if (e := self.art.error(u))},
             "programs": self.program_status(ch),
             "windows": self.open_windows(ch),
             "listeners": cs.listeners,

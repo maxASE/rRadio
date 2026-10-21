@@ -62,6 +62,7 @@ class ArtCache:
         self.urls: OrderedDict[str, str] = OrderedDict()  # key -> remote URL
         self.images: OrderedDict[str, tuple[bytes, str] | None] = OrderedDict()  # key -> image, None if it failed
         self.failed_at: dict[str, float] = {}
+        self.errors: dict[str, str] = {}  # key -> why it failed
         self.size = size
 
     def path(self, url: str) -> str | None:
@@ -86,28 +87,50 @@ class ArtCache:
         url = self.urls.get(key)
         if not url:
             return None
-        image = None
         try:
             async with client(15) as c:
-                async with c.stream("GET", url) as r:
-                    r.raise_for_status()
-                    ctype = r.headers.get("content-type", "").split(";")[0].strip().lower()
-                    if not ctype.startswith("image/"):
-                        raise ValueError(f"not a picture ({ctype or 'no type'})")
-                    data = b""
-                    async for chunk in r.aiter_bytes():
-                        data += chunk
-                        if len(data) > MAX_BYTES:
-                            raise ValueError("picture too big")
-                    image = (data, ctype)
+                image = await _fetch_image(c, url)
         except Exception as e:
-            log.info("art %s failed: %s", url, e)
+            reason = str(e) or type(e).__name__
+            log.warning("picture %s failed: %s", url, reason)
             self.failed_at[key] = time.time()
+            self.errors[key] = reason
             return None
+        self.errors.pop(key, None)
         self.images[key] = image
         while len(self.images) > self.size:
             self.images.popitem(last=False)
         return image
+
+    def error(self, url: str) -> str | None:
+        """Why the picture at `url` could not be fetched, if it failed lately."""
+        return self.errors.get(art_key(url))
+
+
+async def _fetch_image(c, url: str, page_ok: bool = True) -> tuple[bytes, str]:
+    """Download a picture. A web page instead of a picture (say a Wikipedia file
+    page) is searched for its og:image or icon, once."""
+    async with c.stream("GET", url) as r:
+        if r.status_code >= 400:
+            raise ValueError(f"the server answered {r.status_code} {r.reason_phrase}".strip())
+        ctype = r.headers.get("content-type", "").split(";")[0].strip().lower()
+        if not ctype.startswith("image/") and not (page_ok and "html" in ctype):
+            raise ValueError(f"that address is not a picture ({ctype or 'no type'})")
+        data = b""
+        async for chunk in r.aiter_bytes():
+            data += chunk
+            if len(data) > MAX_BYTES:
+                raise ValueError("picture too big (3 MB at most)")
+        if ctype.startswith("image/"):
+            return data, ctype
+        page = _Icons()
+        page.feed(data.decode(r.encoding or "utf-8", "replace"))
+        if not page.found:
+            raise ValueError("that address is a web page with no picture on it; use the picture's own address")
+        # The page's own picture (og:image) beats the site's icon here.
+        og = [u for score, u in page.found if score == 2000]
+        best = og[0] if og else max(page.found, key=lambda x: x[0])[1]
+        return await _fetch_image(c, urljoin(str(r.url), best), page_ok=False)
 
 
 class _Icons(HTMLParser):
