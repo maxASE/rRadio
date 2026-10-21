@@ -120,8 +120,10 @@ function whenLabel(iso) {
 }
 
 // "Next program: …", saying first when a program in an open window is already over.
-function nextProgramLine(windows, nxt) {
+function nextProgramLine(windows, nxt, spot) {
   const parts = [];
+  // A spot or news bulletin coming before the next program is what plays next.
+  if (spot && (!nxt || new Date(spot.at) < new Date(nxt.start))) parts.push(`Next up: ${spot.name} · ${whenLabel(spot.at)}. `);
   for (const w of windows || []) {
     if (w.state === "ended") parts.push(`${w.name} ended at ${isoClock(w.ended_at)}. `);
     else if (w.state === "waiting") parts.push(`${w.name} starts with the show, if it comes before ${isoClock(w.until)}. `);
@@ -440,7 +442,7 @@ function renderHome() {
           ...segs.map((g) => el("i", { class: g.kind, style: `flex:${g.n}` })),
           ...ticks.map((t) => el("b", { style: `left:${t}%` }))),
         el("div", { class: "strip-scale", "aria-hidden": "true" }, el("span", {}, "now"), el("span", {}, "+3 h"), el("span", {}, "+6 h")),
-        el("div", { class: "muted small" }, nextProgramLine(c.windows, nxt)),
+        el("div", { class: "muted small" }, nextProgramLine(c.windows, nxt, c.next_spot)),
         el("div", { class: "row gap" },
           el("button", { class: "listen", "data-listen": c.id }),
           c.stream ? el("button", { onclick: () => copy(c.stream) }, "Copy link") : null,
