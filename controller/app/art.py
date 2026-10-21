@@ -107,10 +107,32 @@ class ArtCache:
         return self.errors.get(art_key(url))
 
 
+# Some image hosts refuse anything that doesn't look like a browser showing their
+# own page (hotlink protection), so a refused request is tried again as one.
+BROWSER_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36"
+
+
+def _as_browser(url: str) -> dict:
+    p = urlsplit(url)
+    return {"User-Agent": BROWSER_UA, "Accept": "image/avif,image/webp,image/*,*/*;q=0.8", "Referer": f"{p.scheme}://{p.netloc}/"}
+
+
 async def _fetch_image(c, url: str, page_ok: bool = True) -> tuple[bytes, str]:
     """Download a picture. A web page instead of a picture (say a Wikipedia file
     page) is searched for its og:image or icon, once."""
-    async with c.stream("GET", url) as r:
+    try:
+        return await _fetch_once(c, url, page_ok, {})
+    except PermissionError:
+        try:
+            return await _fetch_once(c, url, page_ok, _as_browser(url))
+        except PermissionError as e:
+            raise ValueError(f"{e}; the site blocks other sites from using its pictures, so upload the file instead") from None
+
+
+async def _fetch_once(c, url: str, page_ok: bool, headers: dict) -> tuple[bytes, str]:
+    async with c.stream("GET", url, headers=headers) as r:
+        if r.status_code in (401, 403):
+            raise PermissionError(f"the server answered {r.status_code} {r.reason_phrase}".strip())
         if r.status_code >= 400:
             raise ValueError(f"the server answered {r.status_code} {r.reason_phrase}".strip())
         ctype = r.headers.get("content-type", "").split(";")[0].strip().lower()
