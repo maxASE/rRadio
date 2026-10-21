@@ -1,0 +1,110 @@
+# Pirate Radio config example. The web UI writes this file for you
+# (/data/config.yaml in the radio-data volume); hand edits are picked up
+# automatically. IDs are generated when missing.
+
+settings:
+  station_name: Pirate Radio     # name of the web UI
+  timezone: Europe/Berlin        # used for programs and spots
+  invidious_url: http://host.docker.internal:3000
+  poll_minutes: 10               # how often to look for new videos and episodes
+  max_age_hours: 48              # ignore items published longer ago (0 = no limit)
+  ytdlp_fallback: false          # Fetch from the video site directly if Invidious fails
+  video_audio: small           # small (Opus ~70 kbps) or aac (128 kbps)
+  streams: [mp3]                 # any of: mp3, aac, opus
+  navidrome_url: http://host.docker.internal:4533
+  navidrome_user: max
+  navidrome_password: ""         # or NAVIDROME_PASSWORD in .env
+  navidrome_bitrate: 192         # MP3 kbps; 0 = original files
+
+# Each channel is its own stream at /<mount>.mp3 (and .aac/.opus).
+channels:
+  - id: main
+    name: Pirate Radio
+    mount: radio
+    # What plays when nothing else is on; current_station picks one.
+    stations:
+      - id: station1
+        name: My favourite station
+        kind: stream
+        url: https://example.com/stream.mp3
+    current_station: station1
+    # Other stations that take over during weekly windows (end before start = past midnight).
+    programs:
+      - name: Morning show
+        kind: stream
+        url: https://example.com/morning.mp3
+        days: [mon, tue, wed, thu, fri]
+        start: "07:00"
+        end: "09:00"
+        enabled: true
+      # A show without a fixed length: on air only while the station's
+      # stream title says so, inside the window (patterns are regexes).
+      - name: Live show
+        kind: stream
+        url: https://example.com/talk.mp3
+        days: [mon, tue, wed, thu, fri]
+        start: "05:55"
+        end: "11:00"
+        trigger: title
+        title_start: "Live show"         # show starts when the title matches
+        title_keep: "news|traffic"       # these don't end it
+        title_end: ""                    # optional: ends at once
+        end_after_minutes: 3             # other titles for this long end it
+    # Timed cut-ins: news bulletins and your own files.
+    spots:
+      - name: Hourly news
+        content: feed                # newest episode of feed_url
+        feed_url: https://example.com/news-podcast.xml
+        only_new: true               # skip if it already played
+        trigger: every               # every | times | songs
+        every_minutes: 60
+        offset_minutes: 0            # 60 / 0 = on the hour
+        days: [mon, tue, wed, thu, fri, sat, sun]
+        active_from: "06:00"         # equal from/to = all day
+        active_to: "23:00"
+        during_programs: true
+      - name: Station ID
+        content: media               # files from the media folder
+        files: [jingles/]            # "folder/" = every file in it
+        order: rotate                # rotate | random
+        trigger: songs
+        every_songs: 4
+    all_sources: true                # cut in every video channel and podcast
+    sources: []                      # ...or only these source ids when false
+
+  - name: Anna
+    mount: anna
+    stations:
+      - name: Anna's music
+        kind: navidrome
+        playlist: Favourites         # name or id; empty = random songs from the library
+        shuffle: true
+    spots:
+      - name: Pizza ad
+        content: media
+        files: [ads/pizza.mp3]
+        trigger: times
+        times: ["12:00", "18:30"]
+        between_songs: true          # wait for the end of the song
+    all_sources: false
+    sources: [podcast1]
+
+# Shared by all channels.
+video:
+  - name: Some news channel
+    channel_id: UCxxxxxxxxxxxxxxxxxxxxxx   # the web UI finds this from an @handle
+    enabled: true
+    min_minutes: 1      # skip very short videos
+    max_minutes: 90
+    include: ""         # regex; only titles that match
+    exclude: "live|trailer"
+
+podcasts:
+  - id: podcast1
+    name: Some podcast
+    url: https://example.com/feed.xml
+    enabled: true
+    min_minutes: 0
+    max_minutes: 90
+    include: ""
+    exclude: ""

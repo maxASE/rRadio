@@ -1,0 +1,77 @@
+# Pirate Radio: an internet radio relay that cuts in new video uploads
+# (via your own Invidious instance) and podcast episodes, plus scheduled
+# programs. Copy .env.example to .env, adjust, then: docker compose up -d
+#
+# Local changes (ports, a media folder on the host) are best kept in
+# docker-compose.override.yml, which Compose merges in automatically and git
+# leaves alone. See docker-compose.override.example.yml.
+
+name: pirate-radio
+
+services:
+  controller:
+    build: ./controller
+    restart: unless-stopped
+    depends_on: [liquidsoap]
+    ports:
+      - "${UI_PORT:-8080}:8080"
+    environment:
+      TZ: ${TZ:-UTC}
+      INVIDIOUS_URL: ${INVIDIOUS_URL:-http://host.docker.internal:3000}
+      NAVIDROME_URL: ${NAVIDROME_URL:-}
+      NAVIDROME_USER: ${NAVIDROME_USER:-}
+      NAVIDROME_PASSWORD: ${NAVIDROME_PASSWORD:-}
+      DEFAULT_STATION_URL: ${DEFAULT_STATION_URL:-}
+      UI_USERNAME: ${UI_USERNAME:-admin}
+      UI_PASSWORD: ${UI_PASSWORD:-}
+      WIDGET_PUBLIC: ${WIDGET_PUBLIC:-false}
+      PUBLIC_STREAM_BASE: ${PUBLIC_STREAM_BASE:-}
+      ICECAST_PUBLIC_PORT: ${ICECAST_PORT:-8000}
+      LIQUIDSOAP_URL: http://liquidsoap:8005
+      ICECAST_STATUS_URL: http://icecast:8000/status-json.xsl
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - radio-data:/data
+      - radio-ram:/ram
+
+  liquidsoap:
+    image: savonet/liquidsoap:v2.4.6
+    restart: unless-stopped
+    depends_on: [icecast]
+    command: ["/radio/radio.liq"]
+    environment:
+      TZ: ${TZ:-UTC}
+      STATION_NAME: ${STATION_NAME:-Pirate Radio}
+      ICECAST_HOST: icecast
+      ICECAST_PORT: 8000
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?set ICECAST_SOURCE_PASSWORD in .env}
+      FADE_SECONDS: ${FADE_SECONDS:-1.5}
+      CUTIN_GAIN_DB: ${CUTIN_GAIN_DB:-0}
+    volumes:
+      - ./liquidsoap:/radio:ro
+      - radio-data:/data:ro
+      - radio-ram:/ram:ro
+
+  icecast:
+    image: libretime/icecast:2.4.4
+    restart: unless-stopped
+    ports:
+      - "${ICECAST_PORT:-8000}:8000"
+    environment:
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?set ICECAST_SOURCE_PASSWORD in .env}
+      ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:?set ICECAST_ADMIN_PASSWORD in .env}
+      ICECAST_RELAY_PASSWORD: ${ICECAST_ADMIN_PASSWORD}
+      ICECAST_HOSTNAME: ${ICECAST_HOSTNAME:-localhost}
+      ICECAST_MAX_CLIENTS: ${ICECAST_MAX_CLIENTS:-50}
+      # One per channel and stream format (3 channels with MP3 + AAC = 6).
+      ICECAST_MAX_SOURCES: ${ICECAST_MAX_SOURCES:-20}
+
+volumes:
+  radio-data:
+  # RAM disk for downloaded clips ("Keep downloads in RAM" in Settings).
+  radio-ram:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=${RAM_CACHE_SIZE:-512m},uid=10000,mode=0755"
