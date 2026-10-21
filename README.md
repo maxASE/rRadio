@@ -232,6 +232,11 @@ already, and when it plays next.
 
 The controller fetches and caches the pictures, so browsers only talk to rRadio.
 
+`http://<server>:<port>/api/art/now/<channel>.jpg` (channel id or mount) always
+serves the picture of what is playing right now, or the rRadio logo. It needs
+no password, so you can give it to apps that show a station picture by URL.
+Many apps cache such pictures, so it may not change there live.
+
 ## Stream formats
 
 Pick them in **Settings → Stream formats**. You can run several at once.
