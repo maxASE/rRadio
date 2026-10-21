@@ -958,6 +958,15 @@ class Engine:
         urls = {s.image for c in self.config.channels for s in [*c.stations, *c.programs, *c.spots] if s.image}
         return {u: self.art.path(u) for u in sorted(urls)}
 
+    def next_spot_of(self, ch: Channel) -> dict | None:
+        """The channel's soonest timed spot or news, for "Next up" on Home."""
+        now = self.now()
+        due = [(t, s) for s in ch.spots if (t := next_spot(s, now))]
+        if not due:
+            return None
+        t, s = min(due, key=lambda x: x[0])
+        return {"name": s.name, "at": t.isoformat()}
+
     def spot_status(self, ch: Channel) -> dict:
         cs, now = self.state(ch.id), self.now()
         out = {}
@@ -984,6 +993,7 @@ class Engine:
             "channels": [
                 {"id": c.id, "name": c.name, "mount": c.mount, "mode": self.now_playing(c)["mode"],
                  "now": self.now_playing(c), "next_program": next_program(c, self.now()),
+                 "next_spot": self.next_spot_of(c),
                  "windows": self.open_windows(c),
                  "listeners": self.state(c.id).listeners}
                 for c in cfg.channels
