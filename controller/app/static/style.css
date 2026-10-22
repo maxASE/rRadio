@@ -159,6 +159,7 @@ label.inline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .list > li:first-child { border-top: 0; }
 .list.compact > li { padding: 6px 0; font-size: .9rem; }
 .list .empty { color: var(--muted); }
+.list > li .title, .list > li .muted { overflow-wrap: anywhere; }
 .item-row { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .item-row .grow { flex: 1 1 240px; }
 .item-row .title { overflow-wrap: anywhere; font-weight: 600; }
@@ -214,7 +215,7 @@ button.listen.playing { background: var(--accent); color: var(--accent-text); }
 .layer.clip.active { background: var(--clip-soft); border-color: var(--clip); }
 .layer.station.active { background: var(--raised); }
 .layer.warn.active { border-color: var(--bad); }
-.layer .grow { flex: 1 1 240px; }
+.layer .grow { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
 .ldot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--radio); }
 .layer.clip .ldot, .ldot.clip { background: var(--clip); }
 .layer.prog .ldot, .ldot.prog { background: var(--accent); }
@@ -225,7 +226,9 @@ button.listen.playing { background: var(--accent); color: var(--accent-text); }
 .station-chip { min-height: 44px; }
 .station-chip.active { border: 2px solid var(--accent); font-weight: 600; }
 .add-link { padding: 0 8px; }
-.rundown .rd { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 8px; }
+.rundown .rd { display: grid; grid-template-columns: 3.2em 10px minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; padding: 10px 8px; }
+.rundown .rd > .grow { overflow-wrap: anywhere; }
+.rundown .rd > .small { text-align: right; }
 .rundown .rd.now { background: var(--accent-soft); border-radius: 8px; border-top-color: transparent; }
 .rundown .rd.now + .rd { border-top-color: transparent; }
 .rundown .rd.past { opacity: .7; }
@@ -339,6 +342,11 @@ fieldset.formats input { margin-top: 3px; }
   .np-title { font-size: 1.3rem; }
   .np-art { width: 64px; height: 64px; }
   .chips-nav { flex-wrap: nowrap; overflow-x: auto; }
+  /* the source moves under the title instead of squeezing it */
+  .rundown .rd { grid-template-columns: 3.2em 10px minmax(0, 1fr); }
+  .rundown .rd > .small { grid-column: 3; text-align: left; }
+  /* buttons always on their own line, whatever the name's length */
+  #spots > li > .row.between, #programs > li > .row.between { display: grid; justify-content: start; gap: 8px; }
 }
 
 /* pictures in forms and lists */

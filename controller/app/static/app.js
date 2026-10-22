@@ -1307,6 +1307,7 @@ function resetSpotForm() {
   daysPicker($("[data-days]", f), DAYS);
   renderFilePicker();
   spotFormMode();
+  $("#feed-result").textContent = "";
   $("#spot-form-title").textContent = "New spot";
   $("#spot-submit").textContent = "Add spot";
   $("#spot-card").classList.add("hidden");
@@ -1338,10 +1339,23 @@ function editSpot(s) {
   spotPicture(s.image);
   renderFilePicker(s.files);
   spotFormMode();
+  $("#feed-result").textContent = "";
   $("#spot-form-title").textContent = `Edit ${s.name}`;
   $("#spot-submit").textContent = "Save spot";
   showSpotCard();
 }
+$("#btn-check-feed").addEventListener("click", async (ev) => {
+  const out = $("#feed-result"), url = $("#form-spot").feed_url.value.trim();
+  if (!url) return;
+  ev.target.disabled = true;
+  out.textContent = "Checking…";
+  try {
+    const r = await api("/api/feeds/check", { method: "POST", body: { query: url } });
+    out.replaceChildren(el("span", { class: "ok" }, "Works. "), `Newest: ${r.title}${r.published ? ` · ${fmtAgo(r.published)}` : ""} (${r.episodes} episodes)`);
+  } catch (e) {
+    out.replaceChildren(el("span", { class: "bad" }, e.message));
+  } finally { ev.target.disabled = false; }
+});
 $("#spot-cancel").addEventListener("click", resetSpotForm);
 $("#btn-new-spot").addEventListener("click", () => { resetSpotForm(); showSpotCard(); });
 
