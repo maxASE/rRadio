@@ -341,11 +341,12 @@ Apps send the same thing with `POST /api/voice` (form fields `file`,
 
 **Listen again.** The apps can play a clip from the history again, on the phone
 only, with `GET /api/history/<id>/audio` (the `id` and `replay` fields of the
-`history` entries in `/api/status`). Nothing is recorded for this: video
-clips, podcast episodes and links are fetched again from their source. Voice
+`history` entries in `/api/status`), or put it back on the radio with
+`POST /api/history/<id>/play-next`. Nothing is recorded for this: video
+clips, podcast and news episodes and links are fetched again from their source. Voice
 messages exist nowhere else, so a copy is kept for 24 hours (in RAM or on disk,
 following the download setting); turn this off under **Settings › Keep voice
-messages for a day**. Spots and the live radio can't be played again.
+messages for a day**. Inbox files and the live radio can't be played again.
 
 ## Apps and device keys
 
