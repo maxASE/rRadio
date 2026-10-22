@@ -99,6 +99,7 @@ class Program(BaseSource):
     title_keep: str = ""
     title_end: str = ""
     end_after_minutes: float = 3
+    cutins_interrupt: bool = False  # new uploads and episodes may play during it
 
     _days = field_validator("days")(classmethod(lambda cls, v: _check_days(v)))
     _time = field_validator("start", "end")(classmethod(lambda cls, v: _check_time(v)))

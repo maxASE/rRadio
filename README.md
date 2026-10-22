@@ -164,7 +164,14 @@ patterns after the first show. In YAML:
         title_end: ""
         end_after_minutes: 3
         title_url: ""               # empty = the program's url
+        cutins_interrupt: false     # true = new uploads and episodes may play during it
 ```
+
+New video uploads and podcast episodes wait while a program is on and play
+when it ends. Tick *Let new video uploads and podcast episodes interrupt this
+program* under **Schedule › Edit** to let them through. The log says why each
+program ended (`Program … ended on … (window over | title: … | ended by hand)`)
+and when a clip cut in (`Cut-in on …: … (during program …)`).
 
 ## Spots: news, jingles and your own ads
 

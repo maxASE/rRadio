@@ -586,7 +586,8 @@ function renderWhy() {
     layers.push(layer("clip", true, `Cut-in · ${np.title}`,
       `${KIND_NAME[np.kind] || "Clip"} from ${np.source}. ${waiting.length ? `${waiting.length} more waiting.` : "The station comes back when it ends."}`));
   } else {
-    const heldN = np.mode === "program" ? waiting.filter((i) => !i.during_programs).length : 0;
+    const onProg = np.mode === "program" && ch.programs.find((p) => p.id === np.program_id);
+    const heldN = onProg && !onProg.cutins_interrupt ? waiting.filter((i) => !i.during_programs).length : 0;
     layers.push(layer("clip", false, "Cut-ins",
       waiting.length
         ? `${waiting.length} waiting${heldN ? `, ${heldN} held until the program ends` : ""}.`
@@ -993,9 +994,8 @@ function daysLabel(days) {
 
 function programSummary(p) {
   const when = `${daysLabel(p.days)} · ${p.start}–${p.end}`;
-  return p.trigger === "title"
-    ? `${when} · while the stream title matches “${p.title_start || "?"}”`
-    : `${when} · the whole window`;
+  const how = p.trigger === "title" ? `while the stream title matches “${p.title_start || "?"}”` : "the whole window";
+  return `${when} · ${how} · ${p.cutins_interrupt ? "cut-ins may interrupt" : "cut-ins wait"}`;
 }
 
 function renderPrograms() {
@@ -1029,6 +1029,9 @@ function renderPrograms() {
             el("div", { class: "small muted title" }, baseLabel(p)),
             el("div", { class: "row gap" }, el("label", { class: "inline" }, "From", time("start")), el("label", { class: "inline" }, "to", time("end"))),
             days,
+            el("label", { class: "check small" },
+              el("input", { type: "checkbox", checked: !!p.cutins_interrupt, onchange: (e) => { p.cutins_interrupt = e.target.checked; saveConfig(); } }),
+              "Let new video uploads and podcast episodes interrupt this program (otherwise they wait until it ends)"),
             titleTrigger(p),
           );
         })
