@@ -678,14 +678,25 @@ class Engine:
         # Program window over (or replaced by an earlier one): back to the station.
         if cs.on_program and (not due or due.program.id != cs.on_program.program.id):
             p = cs.on_program.program
-            why = cs.shows.get(p.id, {}).get("why", "") if p.trigger == "title" else ""
+            if due:
+                why = f"replaced by {due.program.name}"
+            elif p.id in cs.ended:
+                why = "ended by hand"
+            elif p.trigger == "title":
+                why = cs.shows.get(p.id, {}).get("why", "") or "window over"
+            else:
+                why = "window over"
             self.store.add_history("program", p.name, p.name, "ended", why, channel=ch.id)
+            log.info("Program %s ended on %s (%s)", p.name, ch.name, why)
             cs.on_program = None
 
+        def holds(p: Program, it: Item) -> bool:
+            return not it.during_programs and not p.cutins_interrupt
+
         def eligible(it: Item) -> bool:
-            if cs.on_program and not it.during_programs:
+            if cs.on_program and holds(cs.on_program.program, it):
                 return False
-            if not cs.on_program and due and not it.during_programs and not self._item_wins(cs, it, due):
+            if not cs.on_program and due and holds(due.program, it) and not self._item_wins(cs, it, due):
                 return False
             if it.between_songs and not on_air_clips:
                 return cs.song_changed_at > it.ready_at or time.time() - it.ready_at > HOLD_MAX
@@ -696,6 +707,9 @@ class Engine:
         if nxt and not queued:
             nxt.rid = await self.liq.push(ch.id, nxt.path, nxt.title, nxt.source_name)
             cs.last_clip = (nxt.title, nxt.source_name)
+            log.info("Cut-in on %s: %s (%s)%s", ch.name, nxt.title, nxt.source_name,
+                     f" during program {cs.on_program.program.name}" if cs.on_program else
+                     f" before program {due.program.name}" if due else "")
             nxt.pushed_at = time.time()
             nxt.state = "queued"
             on_air_clips.append(nxt)
@@ -704,6 +718,7 @@ class Engine:
             cs.on_program = due
             why = cs.shows.get(due.program.id, {}).get("why", "") if due.program.trigger == "title" else ""
             self.store.add_history("program", due.program.name, due.program.name, "started", why, channel=ch.id)
+            log.info("Program %s started on %s%s", due.program.name, ch.name, f" ({why})" if why else "")
 
         base = cs.on_program.program if cs.on_program else ch.station()
         await self._set_base(ch, cs, st, base)
