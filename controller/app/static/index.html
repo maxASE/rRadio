@@ -106,6 +106,27 @@
             <button>Play on <span data-channel-name></span></button>
           </form>
 
+          <div class="card stack" id="voice-card">
+            <h3>Voice message</h3>
+            <p class="small muted" id="voice-hint">Record a message; it cuts in like an announcement and is deleted after playing.</p>
+            <div class="row gap">
+              <button type="button" class="primary" id="btn-voice-rec">● Record</button>
+              <span class="small muted voice-time" id="voice-time" hidden></span>
+            </div>
+            <div class="stack" id="voice-preview" hidden>
+              <audio id="voice-audio" controls preload="auto"></audio>
+              <label class="field">Title <input id="voice-title" placeholder="optional, e.g. Dinner is ready"></label>
+              <div class="row gap">
+                <button type="button" class="primary" id="btn-voice-send">Play on <span data-channel-name></span></button>
+                <button type="button" id="btn-voice-all">Play on all channels</button>
+                <button type="button" class="small-btn" id="btn-voice-discard">Discard</button>
+              </div>
+            </div>
+            <label class="field small" id="voice-upload">Or send an audio file
+              <input type="file" id="voice-file" accept="audio/*" capture>
+            </label>
+          </div>
+
           <div class="card">
             <div class="row between"><h3>Queue</h3><span class="muted small" id="queue-count"></span></div>
             <ul class="list" id="queue"></ul>

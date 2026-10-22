@@ -381,3 +381,9 @@ fieldset.formats input { margin-top: 3px; }
   .logout { order: 1; }
   nav { order: 2; flex-basis: 100%; }
 }
+
+/* voice messages */
+#voice-card [hidden], #voice-preview[hidden] { display: none; }
+#voice-audio { width: 100%; }
+#btn-voice-rec.recording { background: var(--bad); border-color: var(--bad); }
+.voice-time { font-variant-numeric: tabular-nums; }

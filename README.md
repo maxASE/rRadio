@@ -277,6 +277,20 @@ player at a stream: `http://<server>:8080/listen.m3u?fmt=aac`. Add
   the same user and password as HTTP Basic auth. The streams and playlist files
   stay open so players don't need a login.
 
+## Voice messages
+
+On a channel's page, **Voice message › Record** records from the microphone;
+listen to it, give it a title if you like, then play it on that channel or on
+all channels. It cuts in like an announcement (also during programs). The
+recording is kept on the RAM disk (`radio-ram`, whatever the download setting)
+and deleted once it has played everywhere, so it never touches the SSD unless
+the RAM disk is missing.
+
+Browsers only allow the microphone over HTTPS or on `localhost`. Over plain
+HTTP, use the file field instead: phones offer their voice recorder there.
+Apps send the same thing with `POST /api/voice` (form fields `file`,
+`channel` = a channel id or `all`, optional `title`).
+
 ## Apps and device keys
 
 Apps don't use the UI password. Each phone or tablet gets its own key instead,
