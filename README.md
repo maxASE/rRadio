@@ -273,6 +273,35 @@ player at a stream: `http://<server>:8080/listen.m3u?fmt=aac`. Add
 - **Password:** set `UI_PASSWORD` to protect the web UI. The streams and
   playlist files stay open so players don't need a login.
 
+## Apps and device keys
+
+Apps don't use the UI password. Each phone or tablet gets its own key instead,
+which you can limit and remove without touching the others.
+
+1. Open **Settings › Apps and devices**, enter a name, choose what the app may
+   do and (optionally) which channels, then press **Show pairing code**.
+2. Scan the QR code with the app, or type the 10-letter code. The code works
+   once and expires after 10 minutes.
+3. The app now appears under **Paired**. Change its role there, or press
+   **Remove** to revoke its key at once.
+
+Roles: **Everything** can do anything the web UI can. **Listen and control**
+can read the status and, on its channels only, skip, end a program, remove
+from the queue, cut in a link, own media, a spot or the latest episode, and
+change the station. It can't see or change settings, sources or the schedule.
+
+Device limits only matter when `UI_PASSWORD` is set; without it, anyone on
+your network can use the web UI and its API anyway.
+
+For app developers: the QR code holds `rradio://pair?server=<url>&code=<code>`.
+The app sends `POST /api/pair` with `{"code": "...", "device_name": "..."}`
+(open without the password) and gets back `{"token": "rr_...", "device": {...},
+"channels": [...], "streams": {...}}`. It then sends
+`Authorization: Bearer <token>` with every request; `GET /api/me` says which
+device, role and channels the key has. Keys are stored only as SHA-256 hashes
+in `state.db`, so they never end up in `config.yaml` or a backup. A removed or
+unknown key gets `401`, a forbidden action `403`.
+
 ## Homepage dashboard widget
 
 [Homepage](https://gethomepage.dev) can show what is on air with its built-in

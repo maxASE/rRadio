@@ -358,3 +358,12 @@ fieldset.formats input { margin-top: 3px; }
 .pop-art { width: 48px; height: 48px; flex: none; border-radius: 8px; object-fit: cover; background: var(--line); }
 .pop-kind { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; }
 .pop-ep { padding: 8px 10px; border-radius: 8px; background: var(--accent-soft); }
+
+/* app pairing */
+.pair-box { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; padding: 14px; border: 1px solid var(--accent-line); border-radius: 12px; background: var(--accent-soft); }
+.pair-box[hidden] { display: none; }
+.pair-qr svg { display: block; width: 200px; height: auto; max-width: 100%; border-radius: 8px; }
+.pair-code { font: 700 1.6rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; margin: 0; }
+.device-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.device-row .grow { flex: 1 1 200px; min-width: 0; }
+.warn-text { color: var(--warn); }

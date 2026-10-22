@@ -8,6 +8,8 @@ import threading
 import time
 from pathlib import Path
 
+from .devices import Devices
+
 DB_PATH = Path(os.environ.get("STATE_DB", "/data/state.db"))
 
 
@@ -39,6 +41,7 @@ class Store:
             cols = {r[1] for r in self._db.execute("PRAGMA table_info(history)")}
             if "channel" not in cols:
                 self._db.execute("ALTER TABLE history ADD COLUMN channel TEXT NOT NULL DEFAULT ''")
+        self.devices = Devices(self._db, self._lock)
 
     def has_any(self, source: str) -> bool:
         with self._lock:
