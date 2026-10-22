@@ -36,7 +36,10 @@ from .sources import (
     download_url,
     passes_filters,
     podcast_latest,
+    keep_for_replay,
+    prune_replays,
     purge_cache,
+    REPLAY_KEEP,
 )
 from .store import Store
 from .titles import Watchers
@@ -598,11 +601,28 @@ class Engine:
     def _finish(self, it: Item, status: str) -> None:
         if it in self.items:
             self.items.remove(it)
+        replay = self._replay_info(it) if status == "played" else None
         if it.kind == "inbox" and it.path:
             self.inbox.done(Path(it.path))
         elif not it.keep_file:
             self._drop_file(it.path)
-        self.store.add_history(it.kind, it.source_name, it.title, status, channel=it.channel)
+        self.store.add_history(it.kind, it.source_name, it.title, status, channel=it.channel, replay=replay)
+
+    def _replay_info(self, it: Item) -> dict | None:
+        """How "listen again" finds this clip later. Clips are fetched again from where
+        they came from; only voice messages, which exist nowhere else, are kept for a
+        day. Spots (news, jingles) are left out: the next one is newer anyway."""
+        if it.kind in ("inbox", "spot"):
+            return None
+        if it.kind == "voice":
+            if not self.config.settings.replay_keep or not it.path or not Path(it.path).is_file():
+                return None
+            prune_replays(REPLAY_KEEP)
+            kept = keep_for_replay(Path(it.path), self.config.settings.cache_in_ram)
+            return {"path": str(kept), "until": time.time() + REPLAY_KEEP}
+        if it.keep_file and it.path:  # own media stays on disk anyway
+            return {"path": it.path}
+        return {"media": it.media} if it.media else None
 
     def _item_wins(self, cs: ChannelState, it: Item, due: DueProgram) -> bool:
         start = due.start.timestamp()

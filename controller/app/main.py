@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
+import httpx
 import segno
 import yaml
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -31,7 +32,7 @@ from .config import SECRET_MASK, Config, ConfigStore, Podcast, dump
 from .engine import Engine, short_error
 from .liq import Liquidsoap
 from .navidrome import Navidrome
-from .sources import Invidious, Item, cache_dir, feed_title, podcast_latest, video_id_from_url
+from .sources import USER_AGENT, Invidious, Item, cache_dir, feed_title, podcast_latest, video_id_from_url
 from .sessions import COOKIE, DAYS
 from .store import Store
 from .titles import peek
@@ -66,7 +67,7 @@ app = FastAPI(title="rRadio", version=__version__, lifespan=lifespan, docs_url="
 
 # What a "member" device may call; everything else needs an admin device or the UI password.
 MEMBER_ROUTES = {
-    "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+)"),
+    "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio)"),
     "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire)"),
     "DELETE": re.compile(r"/api/queue/.+"),
 }
@@ -695,6 +696,56 @@ async def voice_message(file: UploadFile = File(...), channel: str = Form("all")
         engine.enqueue(it.copy_for(ch.id))
     log.info("voice message %s (%d kB) for %s", path.name, len(data) // 1024, ", ".join(c.id for c in targets))
     return {"ok": True, "channels": [c.id for c in targets], "title": it.title}
+
+
+REPLAY_HEADERS = ("content-type", "content-length", "content-range", "accept-ranges")
+
+
+@app.get("/api/history/{entry_id}/audio")
+async def history_audio(entry_id: int, request: Request):
+    """"Listen again": the audio of a clip from the history, for one listener only
+    (the radio is not interrupted). Kept voice messages are served from the
+    replay folder; anything else is fetched again from where it came from
+    (videos through Invidious), passing Range on so the player can seek."""
+    found = state.replay_of(entry_id)
+    if not found:
+        raise HTTPException(404, "this can no longer be played again")
+    channel, info = found
+    dev = restricted()
+    if dev and channel and not dev.may_use(channel):
+        raise HTTPException(403, "this device may not use that channel")
+    if info.get("path"):
+        return FileResponse(info["path"])
+    media_ref = info["media"]
+    if media_ref.startswith(("http://", "https://")):
+        urls = [media_ref]
+    else:  # a video id; AAC (itag 140), because phones can't play WebM/Opus
+        urls = await engine.invidious().audio_urls(media_ref, "140")
+    headers = {"User-Agent": USER_AGENT, "Accept-Encoding": "identity"}
+    if request.headers.get("range"):
+        headers["Range"] = request.headers["range"]
+    client = httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(30, read=60))
+    for url in urls:
+        try:
+            upstream = await client.send(client.build_request("GET", url, headers=headers), stream=True)
+        except httpx.HTTPError as e:
+            log.info("listen again: %s failed: %s", url, e)
+            continue
+        if upstream.status_code in (200, 206):
+            async def body(upstream=upstream):
+                try:
+                    async for chunk in upstream.aiter_raw():
+                        yield chunk
+                finally:
+                    await upstream.aclose()
+                    await client.aclose()
+
+            out = {k: v for k, v in upstream.headers.items() if k.lower() in REPLAY_HEADERS}
+            return StreamingResponse(body(), status_code=upstream.status_code, headers=out)
+        log.info("listen again: %s answered %s", url, upstream.status_code)
+        await upstream.aclose()
+    await client.aclose()
+    raise HTTPException(502, "the source of this clip didn't answer")
 
 
 @app.get("/api/spots/{spot_id}/info")

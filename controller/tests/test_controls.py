@@ -62,3 +62,45 @@ def test_config_round_trip(admin):
     cfg["settings"]["station_name"] = "Test Radio"
     assert admin.put("/api/config", json=cfg).status_code == 200
     assert admin.get("/api/status").json()["station_name"] == "Test Radio"
+
+
+def test_voice_message_can_be_played_again_for_a_day(admin, app_main):
+    audio = b"\0\0\0\x18ftypM4A " + b"\0" * 4000
+    r = admin.post("/api/voice", files={"file": ("v.m4a", audio, "audio/mp4")}, data={"channel": "all", "title": "Again"})
+    assert r.status_code == 200, r.text
+    for it in [i for i in app_main.engine.items if i.kind == "voice"]:
+        app_main.engine._finish(it, "played")
+    entry = next(h for h in admin.get("/api/status").json()["history"] if h["title"] == "Again")
+    assert entry["replay"] is True
+    got = admin.get(f"/api/history/{entry['id']}/audio")
+    assert got.status_code == 200
+    assert got.content == audio
+
+
+def test_spots_and_skipped_clips_are_not_kept(admin, app_main):
+    from app.sources import Item
+
+    spot = Item(kind="spot", source_id="news", source_name="News", item_id="n1", title="News 13:00",
+                media="https://example.com/n.mp3", channel="kid")
+    app_main.engine._finish(spot, "played")
+    clip = Item(kind="podcast", source_id="p", source_name="Pod", item_id="e1", title="Episode",
+                media="https://example.com/e.mp3", channel="kid")
+    app_main.engine._finish(clip, "skipped")
+    history = admin.get("/api/status", params={"channel": "kid"}).json()["history"]
+    assert next(h for h in history if h["title"] == "News 13:00")["replay"] is False
+    assert next(h for h in history if h["title"] == "Episode")["replay"] is False
+
+
+def test_played_clips_are_fetched_again_from_their_source(admin, app_main):
+    from app.sources import Item
+
+    clip = Item(kind="podcast", source_id="p", source_name="Pod", item_id="e2", title="Played episode",
+                media="https://example.com/e2.mp3", channel="kid")
+    app_main.engine._finish(clip, "played")
+    entry = next(h for h in admin.get("/api/status", params={"channel": "kid"}).json()["history"] if h["title"] == "Played episode")
+    assert entry["replay"] is True
+    assert app_main.state.replay_of(entry["id"]) == ("kid", {"media": "https://example.com/e2.mp3"})
+
+
+def test_unknown_history_entry_cannot_be_played(admin):
+    assert admin.get("/api/history/999999/audio").status_code == 404

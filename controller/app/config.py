@@ -238,6 +238,9 @@ class Settings(BaseModel):
     video_audio: Literal["small", "aac"] = "small"
     # Download clips to the RAM disk instead of the data volume (saves SSD writes).
     cache_in_ram: bool = True
+    # Keep voice messages for a day after they played, so the apps can play them again
+    # from the history. Other clips are fetched again from their source when asked.
+    replay_keep: bool = True
     streams: list[str] = Field(default_factory=lambda: ["mp3"])
     # Navidrome (or any Subsonic server). The password may also come from
     # NAVIDROME_PASSWORD in .env, which keeps it out of this file.

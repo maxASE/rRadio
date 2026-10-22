@@ -1807,6 +1807,7 @@ $("#form-settings").addEventListener("submit", (ev) => {
     ytdlp_fallback: f.ytdlp_fallback.checked,
     video_audio: f.video_audio.value,
     cache_in_ram: f.cache_in_ram.checked,
+    replay_keep: f.replay_keep.checked,
     streams: $$('input[name="streams"]:checked', f).map((c) => c.value),
     navidrome_url: f.navidrome_url.value,
     navidrome_user: f.navidrome_user.value,
