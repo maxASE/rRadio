@@ -77,7 +77,7 @@ def test_voice_message_can_be_played_again_for_a_day(admin, app_main):
     assert got.content == audio
 
 
-def test_spots_and_skipped_clips_are_not_kept(admin, app_main):
+def test_spots_are_not_kept_but_skipped_clips_are(admin, app_main):
     from app.sources import Item
 
     spot = Item(kind="spot", source_id="news", source_name="News", item_id="n1", title="News 13:00",
@@ -88,7 +88,7 @@ def test_spots_and_skipped_clips_are_not_kept(admin, app_main):
     app_main.engine._finish(clip, "skipped")
     history = admin.get("/api/status", params={"channel": "kid"}).json()["history"]
     assert next(h for h in history if h["title"] == "News 13:00")["replay"] is False
-    assert next(h for h in history if h["title"] == "Episode")["replay"] is False
+    assert next(h for h in history if h["title"] == "Episode")["replay"] is True
 
 
 def test_played_clips_are_fetched_again_from_their_source(admin, app_main):

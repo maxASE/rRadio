@@ -601,7 +601,8 @@ class Engine:
     def _finish(self, it: Item, status: str) -> None:
         if it in self.items:
             self.items.remove(it)
-        replay = self._replay_info(it) if status == "played" else None
+        # A clip ended early ("End clip") is the one most likely wanted back.
+        replay = self._replay_info(it) if status in ("played", "skipped") else None
         if it.kind == "inbox" and it.path:
             self.inbox.done(Path(it.path))
         elif not it.keep_file:
