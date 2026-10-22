@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
+from . import API_VERSION, __version__
 from . import devices as devmod
 from . import media, transfer
 from .art import find_station_logo, image_file, save_image
@@ -60,7 +61,7 @@ async def lifespan(_: FastAPI):
     await engine.stop()
 
 
-app = FastAPI(title="Pirate Radio", lifespan=lifespan, docs_url="/api/docs", redoc_url=None)
+app = FastAPI(title="rRadio", version=__version__, lifespan=lifespan, docs_url="/api/docs", redoc_url=None)
 
 
 # What a "member" device may call; everything else needs an admin device or the UI password.
@@ -215,7 +216,7 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 @app.get("/healthz", include_in_schema=False)
 async def healthz():
-    return {"ok": True, "engine_up": engine.liq_up}
+    return {"ok": True, "engine_up": engine.liq_up, "version": __version__, "api": API_VERSION}
 
 
 def _playlist(request: Request, fmt: str, channel: str | None) -> tuple[str, str, str]:
@@ -252,6 +253,10 @@ async def status(request: Request, channel: str | None = None):
     return build_status(request, channel, dev)
 
 
+EVENTS_PING = 20  # seconds between keep-alive comments on /api/events
+EVENTS_MAX = 1800  # seconds before the server ends a feed; the client reconnects
+
+
 @app.get("/api/events", include_in_schema=False)
 async def events(request: Request, channel: str | None = None):
     """The same data as /api/status as a live feed (Server-Sent Events): sent once
@@ -265,13 +270,13 @@ async def events(request: Request, channel: str | None = None):
     async def feed():
         started, seen = time.monotonic(), -1
         yield "retry: 3000\n\n"
-        while time.monotonic() - started < 1800 and not await request.is_disconnected():
+        while time.monotonic() - started < EVENTS_MAX and not await request.is_disconnected():
             if engine.version != seen:
                 seen = engine.version
                 yield f"data: {json.dumps(build_status(request, channel, dev), default=str)}\n\n"
             else:
                 yield ": ping\n\n"
-            await engine.wait_change(seen, 20)
+            await engine.wait_change(seen, EVENTS_PING)
 
     return StreamingResponse(feed(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -835,6 +840,7 @@ async def pair(body: PairRedeem, request: Request):
 async def me(request: Request):
     """Who is asking: the app's device (with its role and channels), or the web UI."""
     dev = devmod.current.get()
-    return {"device": dev.public() if dev else None, "role": dev.role if dev else "admin", "login": bool(UI_PASSWORD),
+    return {"version": __version__, "api": API_VERSION,
+            "device": dev.public() if dev else None, "role": dev.role if dev else "admin", "login": bool(UI_PASSWORD),
             "station_name": store.config.settings.station_name,
             "channels": _channels_of(dev), "streams": {c["id"]: stream_urls(request, c["id"]) for c in _channels_of(dev)}}

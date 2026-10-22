@@ -25,6 +25,10 @@ jobs:
           pip install -r controller/requirements.txt
           python -m compileall -q controller/app
           cd controller && CONFIG_PATH=/tmp/c.yaml STATE_DB=/tmp/s.db python -c "import app.main"
+      - name: Test the controller
+        run: |
+          pip install pytest
+          cd controller && python -m pytest -q
       - name: Check docker-compose.yml
         run: cp .env.example .env && docker compose config -q
 
