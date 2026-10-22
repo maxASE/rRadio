@@ -24,6 +24,11 @@ async function api(path, opts = {}) {
     ...opts,
     body: opts.body === undefined ? undefined : isForm ? opts.body : JSON.stringify(opts.body),
   });
+  if (res.status === 401) {
+    // Logged out (or the session expired): go to the log-in page and come back here after.
+    location.href = `/login?next=${encodeURIComponent(location.pathname + location.hash)}`;
+    throw new Error("Please log in");
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     let msg = data.detail || res.statusText;
@@ -1896,4 +1901,7 @@ basePicker($("#form-program [data-base]"));
 resetSpotForm();
 
 loadConfig().then(() => { route(); refresh(); });
+api("/api/me").then((me) => { $("#btn-logout").hidden = !me.login; }).catch(() => {});
+$("#btn-logout").addEventListener("click", () =>
+  api("/api/logout", { method: "POST" }).finally(() => location.replace("/login")));
 setInterval(refresh, 3000);
