@@ -104,3 +104,28 @@ def test_played_clips_are_fetched_again_from_their_source(admin, app_main):
 
 def test_unknown_history_entry_cannot_be_played(admin):
     assert admin.get("/api/history/999999/audio").status_code == 404
+
+
+def test_history_clip_can_be_queued_again(admin, app_main):
+    from app.sources import Item
+
+    clip = Item(kind="video", source_id="vid", source_name="Riks", item_id="v1", title="Again please",
+                media="dQw4w9WgXcQ", channel="kid")
+    app_main.engine._finish(clip, "played")
+    entry = next(h for h in admin.get("/api/status", params={"channel": "kid"}).json()["history"] if h["title"] == "Again please")
+    app_main.engine.downloads.put_nowait = lambda key: None  # no Invidious in tests
+    r = admin.post(f"/api/history/{entry['id']}/play-next")
+    assert r.status_code == 200, r.text
+    queued = next(i for i in app_main.engine.items if i.uid == r.json()["key"])
+    assert (queued.channel, queued.media, queued.priority) == ("kid", "dQw4w9WgXcQ", 1)
+    app_main.engine.items.remove(queued)
+
+
+def test_spots_cannot_be_queued_again(admin, app_main):
+    from app.sources import Item
+
+    spot = Item(kind="spot", source_id="news", source_name="News", item_id="n2", title="Old news",
+                media="https://example.com/n2.mp3", channel="kid")
+    app_main.engine._finish(spot, "played")
+    entry = next(h for h in admin.get("/api/status", params={"channel": "kid"}).json()["history"] if h["title"] == "Old news")
+    assert admin.post(f"/api/history/{entry['id']}/play-next").status_code == 404
