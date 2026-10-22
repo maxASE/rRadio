@@ -306,6 +306,15 @@ device, role and channels the key has. Keys are stored only as SHA-256 hashes
 in `state.db`, so they never end up in `config.yaml` or a backup. A removed or
 unknown key gets `401`, a forbidden action `403`.
 
+`GET /api/events?channel=<id>` is a live feed (Server-Sent Events) with the same
+JSON as `/api/status`: one `data:` line right away, then a new one only when
+something changes (a clip starts, the queue or station changes, a download
+progresses). A `: ping` comment comes every 20 seconds while nothing happens,
+and the server ends the stream after 30 minutes so the client reconnects. The
+web UI uses it too, so an idle open tab costs the server nothing; clip times are
+counted up in the browser. Behind nginx, the feed sends `X-Accel-Buffering: no`
+so it is not held back; no proxy changes are needed.
+
 ## Homepage dashboard widget
 
 [Homepage](https://gethomepage.dev) can show what is on air with its built-in
