@@ -30,7 +30,7 @@ from .config import SECRET_MASK, Config, ConfigStore, dump
 from .engine import Engine
 from .liq import Liquidsoap
 from .navidrome import Navidrome
-from .sources import Invidious, Item, feed_title, video_id_from_url
+from .sources import Invidious, Item, cache_dir, feed_title, video_id_from_url
 from .sessions import COOKIE, DAYS
 from .store import Store
 from .titles import peek
@@ -66,7 +66,7 @@ app = FastAPI(title="Pirate Radio", lifespan=lifespan, docs_url="/api/docs", red
 # What a "member" device may call; everything else needs an admin device or the UI password.
 MEMBER_ROUTES = {
     "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+)"),
-    "POST": re.compile(r"/api/(skip|program/end|play-url|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire)"),
+    "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire)"),
     "DELETE": re.compile(r"/api/queue/.+"),
 }
 
@@ -639,6 +639,44 @@ async def play_media(body: PlayMedia):
     if not p.is_file():
         raise HTTPException(404, "no such file")
     return engine.play_media(p, ch.id).public()
+
+
+VOICE_TYPES = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "m4a", "audio/aac": "aac", "audio/x-m4a": "m4a",
+               "audio/mpeg": "mp3", "audio/wav": "wav", "audio/x-wav": "wav", "video/webm": "webm"}
+VOICE_MAX = 25 * 1024 * 1024
+
+
+@app.post("/api/voice")
+async def voice_message(file: UploadFile = File(...), channel: str = Form("all"), title: str = Form("")):
+    """A recorded voice message, cut in right away on one channel or on all
+    ("all"). The file goes to the RAM disk (when there is one, whatever the
+    download setting) and is deleted once it has played everywhere."""
+    dev = devmod.current.get()
+    if channel == "all":
+        targets = [c for c in store.config.channels if dev is None or dev.may_use(c.id)]
+        if not targets:
+            raise HTTPException(404, "no channel to play on")
+    else:
+        targets = [channel_or_404(channel)]
+    ctype = (file.content_type or "").split(";")[0].strip().lower()
+    ext = VOICE_TYPES.get(ctype) or Path(file.filename or "").suffix.lstrip(".").lower()
+    if ext not in set(VOICE_TYPES.values()):
+        raise HTTPException(415, f"not an audio recording ({ctype or 'unknown type'})")
+    data = await file.read(VOICE_MAX + 1)
+    if len(data) > VOICE_MAX:
+        raise HTTPException(413, "recording is too long (25 MB at most)")
+    if len(data) < 1000:
+        raise HTTPException(400, "the recording is empty")
+    path = cache_dir(True) / f"voice-{secrets.token_hex(6)}.{ext}"
+    await run_in_threadpool(path.write_bytes, data)
+    who = dev.name if dev else "web"
+    it = Item(kind="voice", source_id="voice", source_name="Voice message", item_id=path.name,
+              title=title.strip()[:80] or f"Voice message from {who}", media=str(path), path=str(path),
+              priority=1, during_programs=True)
+    for ch in targets:
+        engine.enqueue(it.copy_for(ch.id))
+    log.info("voice message %s (%d kB) for %s", path.name, len(data) // 1024, ", ".join(c.id for c in targets))
+    return {"ok": True, "channels": [c.id for c in targets], "title": it.title}
 
 
 @app.get("/api/spots/{spot_id}/info")

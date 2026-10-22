@@ -321,7 +321,7 @@ const MODE_LABEL = {
   offline: "Audio engine offline",
 };
 const PILL = { station: "RADIO", program: "PROGRAM", cutin: "CUT-IN", silence: "WAITING", offline: "OFFLINE" };
-const KIND_NAME = { podcast: "Podcast", video: "Video", spot: "Spot", media: "Own media", inbox: "Inbox", url: "Link", program: "Program" };
+const KIND_NAME = { podcast: "Podcast", video: "Video", spot: "Spot", media: "Own media", inbox: "Inbox", url: "Link", program: "Program", voice: "Voice message" };
 
 function nowTitle(np) {
   if (np.mode === "silence" && !np.source) return "No station";
@@ -1822,6 +1822,104 @@ $("#btn-test-nd").addEventListener("click", async () => {
   out.textContent = r.ok ? `Connected · server ${r.version} · ${r.playlists} playlist${r.playlists === 1 ? "" : "s"}` : r.error;
   out.className = "small " + (r.ok ? "ok" : "bad");
 });
+
+// --- voice messages ---------------------------------------------------------------------------
+
+let recorder = null;
+let voiceBlob = null;
+let voiceTimer = null;
+
+function voiceReset() {
+  voiceBlob = null;
+  const a = $("#voice-audio");
+  if (a.src) URL.revokeObjectURL(a.src);
+  a.removeAttribute("src");
+  $("#voice-preview").hidden = true;
+  $("#voice-time").hidden = true;
+  $("#voice-title").value = "";
+}
+
+function showVoice(blob) {
+  voiceBlob = blob;
+  $("#voice-audio").src = URL.createObjectURL(blob);
+  $("#voice-preview").hidden = false;
+}
+
+async function sendVoice(target) {
+  if (!voiceBlob) return;
+  const type = (voiceBlob.type || "audio/webm").split(";")[0];
+  const ext = { "audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "m4a", "audio/mpeg": "mp3", "audio/wav": "wav" }[type] || "webm";
+  const fd = new FormData();
+  fd.append("file", new File([voiceBlob], `voice.${ext}`, { type }));
+  fd.append("channel", target);
+  fd.append("title", $("#voice-title").value);
+  for (const b of $$("#voice-preview button")) b.disabled = true;
+  try {
+    const r = await api("/api/voice", { method: "POST", body: fd });
+    toast(r.channels.length > 1 ? `Playing on ${plural(r.channels.length, "channel")}` : "Playing next");
+    voiceReset();
+    refresh();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    for (const b of $$("#voice-preview button")) b.disabled = false;
+  }
+}
+
+$("#btn-voice-rec").addEventListener("click", async () => {
+  const btn = $("#btn-voice-rec");
+  if (recorder) { recorder.stop(); return; }
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    toast("This browser can only record over HTTPS (or on localhost). Use the file field below instead.", true);
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  } catch (e) {
+    toast(`No microphone: ${e.message}`, true);
+    return;
+  }
+  voiceReset();
+  const chunks = [];
+  const started = Date.now();
+  recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  recorder.onstop = () => {
+    stream.getTracks().forEach((t) => t.stop());
+    clearInterval(voiceTimer);
+    $("#voice-time").textContent = $("#voice-time").textContent.replace("Recording", "Length");
+    btn.textContent = "● Record";
+    btn.classList.remove("recording");
+    const type = recorder.mimeType;
+    recorder = null;
+    showVoice(new Blob(chunks, { type }));
+  };
+  recorder.start();
+  btn.textContent = "■ Stop";
+  btn.classList.add("recording");
+  const t = $("#voice-time");
+  t.hidden = false;
+  const show = () => {
+    const s = Math.round((Date.now() - started) / 1000);
+    t.textContent = `Recording ${fmtTime(s)}`;
+    if (s >= 300 && recorder) recorder.stop(); // five minutes is plenty for an announcement
+  };
+  show();
+  voiceTimer = setInterval(show, 500);
+});
+
+$("#voice-file").addEventListener("change", (ev) => {
+  const f = ev.target.files[0];
+  if (f) { voiceReset(); showVoice(f); }
+  ev.target.value = "";
+});
+$("#btn-voice-send").addEventListener("click", () => sendVoice(channelId));
+$("#btn-voice-all").addEventListener("click", () => sendVoice("all"));
+$("#btn-voice-discard").addEventListener("click", voiceReset);
+if (!navigator.mediaDevices?.getUserMedia) {
+  $("#voice-hint").textContent = "Recording in the browser needs HTTPS (or localhost). You can still send a recording from your phone's voice recorder as a file.";
+}
 
 // --- app devices ----------------------------------------------------------------------------
 
