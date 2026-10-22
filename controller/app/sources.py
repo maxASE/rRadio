@@ -425,6 +425,35 @@ async def download(
     raise RuntimeError("; ".join(errors[-2:]) or "no audio found")
 
 
+REPLAY_KEEP = 24 * 3600  # seconds a kept voice message stays
+
+
+def keep_for_replay(path: Path, in_ram: bool) -> Path:
+    """A copy of a played clip in the replay folder (next to the cache, which
+    purge_cache never touches) for "listen again". One copy per file."""
+    folder = cache_dir(in_ram) / "replay"
+    folder.mkdir(exist_ok=True)
+    target = folder / path.name
+    if not target.exists():
+        shutil.copyfile(path, target)
+    return target
+
+
+def prune_replays(max_age: float) -> None:
+    """Delete kept clips older than max_age seconds."""
+    limit = time.time() - max_age
+    for d in (CACHE_DIR, RAM_CACHE_DIR):
+        folder = d / "replay"
+        if not folder.is_dir():
+            continue
+        for p in folder.iterdir():
+            try:
+                if p.is_file() and p.stat().st_mtime < limit:
+                    p.unlink()
+            except OSError:
+                pass
+
+
 def purge_cache(keep: set[str]) -> None:
     for d in (CACHE_DIR, RAM_CACHE_DIR):
         if not d.is_dir() or not os.access(d, os.W_OK):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import threading
@@ -12,6 +13,19 @@ from .devices import Devices
 from .sessions import Sessions
 
 DB_PATH = Path(os.environ.get("STATE_DB", "/data/state.db"))
+
+
+def replay_available(raw: str) -> bool:
+    """A kept file must still be there; a source to fetch again always is."""
+    if not raw:
+        return False
+    try:
+        info = json.loads(raw)
+    except ValueError:
+        return False
+    if info.get("path"):
+        return Path(info["path"]).is_file()
+    return bool(info.get("media"))
 
 
 class Store:
@@ -42,6 +56,9 @@ class Store:
             cols = {r[1] for r in self._db.execute("PRAGMA table_info(history)")}
             if "channel" not in cols:
                 self._db.execute("ALTER TABLE history ADD COLUMN channel TEXT NOT NULL DEFAULT ''")
+            if "replay" not in cols:
+                # JSON: where "listen again" gets the audio (a kept file, or the source to fetch again).
+                self._db.execute("ALTER TABLE history ADD COLUMN replay TEXT NOT NULL DEFAULT ''")
         self.devices = Devices(self._db, self._lock)
         self.sessions = Sessions(self._db, self._lock)
 
@@ -69,12 +86,13 @@ class Store:
         with self._lock, self._db:
             self._db.execute("DELETE FROM seen WHERE source=?", (source,))
 
-    def add_history(self, kind: str, source: str, title: str, status: str, detail: str = "", channel: str = "") -> None:
+    def add_history(self, kind: str, source: str, title: str, status: str, detail: str = "", channel: str = "",
+                    replay: dict | None = None) -> None:
         """channel "" means the entry is not about one channel (e.g. a filtered upload)."""
         with self._lock, self._db:
             self._db.execute(
-                "INSERT INTO history (ts, kind, source, title, status, detail, channel) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (time.time(), kind, source, title, status, detail, channel),
+                "INSERT INTO history (ts, kind, source, title, status, detail, channel, replay) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (time.time(), kind, source, title, status, detail, channel, json.dumps(replay) if replay else ""),
             )
             self._db.execute(
                 "DELETE FROM history WHERE id NOT IN (SELECT id FROM history ORDER BY id DESC LIMIT 500)"
@@ -84,12 +102,20 @@ class Store:
         """Entries for one channel plus the ones that concern all channels."""
         with self._lock:
             rows = self._db.execute(
-                "SELECT ts, kind, source, title, status, detail FROM history"
+                "SELECT id, ts, kind, source, title, status, detail, replay FROM history"
                 " WHERE ? IS NULL OR channel IN (?, '') ORDER BY id DESC LIMIT ?",
                 (channel, channel, limit),
             ).fetchall()
-        keys = ["ts", "kind", "source", "title", "status", "detail"]
-        return [dict(zip(keys, r)) for r in rows]
+        keys = ["id", "ts", "kind", "source", "title", "status", "detail"]
+        return [{**dict(zip(keys, r)), "replay": replay_available(r[7])} for r in rows]
+
+    def replay_of(self, entry_id: int) -> tuple[str, dict] | None:
+        """(channel, replay info) of one history entry, if it can be listened to again."""
+        with self._lock:
+            row = self._db.execute("SELECT channel, replay FROM history WHERE id = ?", (entry_id,)).fetchone()
+        if not row or not replay_available(row[1]):
+            return None
+        return row[0], json.loads(row[1])
 
     def last_cutin(self, channel: str | None = None) -> dict | None:
         """The most recent clip that went on air (filtered-out items excluded)."""
