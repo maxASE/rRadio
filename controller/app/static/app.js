@@ -715,7 +715,8 @@ function renderChannelSettings() {
         saveConfig();
       } }),
       "Cut in every video channel and podcast, including ones added later"),
-    el("div", {},
+    el("div", { class: "row gap" },
+      el("a", { class: "button", href: `/api/channels/${encodeURIComponent(c.id)}/export`, title: "A zip with this channel's stations, programs, spots, sources, own audio and pictures, for Settings › Import on another rRadio" }, "Export channel"),
       el("button", {
         class: "danger", disabled: cfg.channels.length < 2,
         onclick: () => {
@@ -727,6 +728,34 @@ function renderChannelSettings() {
       }, "Remove channel")),
   );
 }
+
+$("#form-import").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target, out = $("#import-result");
+  const send = (replace) => {
+    const fd = new FormData();
+    fd.append("file", f.file.files[0]);
+    fd.append("name", f.name.value.trim());
+    if (replace) fd.append("replace", "true");
+    return api("/api/import", { method: "POST", body: fd });
+  };
+  out.textContent = "Importing…";
+  try {
+    let r;
+    try {
+      r = await send(false);
+    } catch (e) {
+      if (!/full backup/.test(e.message) || !confirm(`${e.message} The current config is kept as a copy next to config.yaml. Restore it?`)) throw e;
+      r = await send(true);
+    }
+    out.textContent = r.summary;
+    f.reset();
+    await loadConfig();
+    toast(r.summary);
+  } catch (e) {
+    out.replaceChildren(el("span", { class: "bad" }, e.message));
+  }
+});
 
 const skip = () => api(`/api/skip?${chq()}`, { method: "POST" }).then(refresh).catch((e) => toast(e.message, true));
 $("#btn-skip").addEventListener("click", skip);

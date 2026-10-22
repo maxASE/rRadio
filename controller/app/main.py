@@ -9,6 +9,7 @@ import mimetypes
 import os
 import re
 import secrets
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Res
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
-from . import media
+from . import media, transfer
 from .art import find_station_logo, image_file, save_image
 from .config import SECRET_MASK, Config, ConfigStore, dump
 from .engine import Engine
@@ -31,6 +32,7 @@ from .titles import peek
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL_CONTROLLER", "INFO"), format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
+log = logging.getLogger("rradio.main")
 
 STATIC = Path(__file__).parent / "static"
 UI_USER = os.environ.get("UI_USERNAME", "admin")
@@ -200,6 +202,45 @@ async def config_yaml():
     return PlainTextResponse(yaml.safe_dump(dump(store.config, mask=True), sort_keys=False, allow_unicode=True),
                              media_type="text/yaml",
                              headers={"Content-Disposition": 'attachment; filename="config.yaml"'})
+
+
+def _zip(data: bytes, name: str) -> Response:
+    return Response(data, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.get("/api/channels/{cid}/export", include_in_schema=False)
+async def export_channel(cid: str):
+    ch = channel_or_404(cid)
+    data = await run_in_threadpool(transfer.export_channel, store.config, ch)
+    return _zip(data, f"rradio-{ch.mount}.zip")
+
+
+@app.get("/api/backup", include_in_schema=False)
+async def backup():
+    data = await run_in_threadpool(transfer.export_all, store.config)
+    return _zip(data, f"rradio-backup-{time.strftime('%Y-%m-%d')}.zip")
+
+
+@app.post("/api/import")
+async def import_file(file: UploadFile = File(...), name: str = Form(""), replace: bool = Form(False)):
+    """A channel export adds a channel; a full backup replaces the whole config."""
+    data = await file.read()
+    old_sources = {s.id for s in store.config.video + store.config.podcasts}
+    try:
+        cfg, summary = await run_in_threadpool(transfer.import_zip, store.config, data, name, store.path, replace)
+    except transfer.NeedsConfirm as e:
+        raise HTTPException(409, str(e))
+    except ValidationError as e:
+        raise HTTPException(422, "; ".join(f"{'.'.join(map(str, x['loc']))}: {x['msg']}" for x in e.errors()))
+    except (ValueError, KeyError, yaml.YAMLError) as e:
+        raise HTTPException(400, str(e))
+    cfg = store.save(cfg)
+    engine.write_channels()
+    for s in cfg.video + cfg.podcasts:
+        if s.id not in old_sources:
+            engine.check_now(s.id)
+    log.info(summary)
+    return {"summary": summary, "config": cfg.masked()}
 
 
 class StationChoice(BaseModel):
