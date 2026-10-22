@@ -332,6 +332,37 @@
           <button class="primary">Save settings</button>
         </form>
       </div>
+      <div class="card" id="devices-card">
+        <h2>Apps and devices</h2>
+        <p class="muted">Pair the rRadio app by scanning a QR code. Each phone gets its own key, which you can limit to some channels or remove at any time.</p>
+        <p class="small warn-text" id="devices-warning" hidden>No <code>UI_PASSWORD</code> is set, so anyone on your network can still use rRadio without a key. Set one in <code>.env</code> to make device limits count.</p>
+        <form id="form-pair" class="stack">
+          <label class="field">Name <input name="name" placeholder="e.g. Max's phone"></label>
+          <label class="field">Can do
+            <select name="role">
+              <option value="member">Listen and control its channels</option>
+              <option value="admin">Everything, including settings</option>
+            </select>
+          </label>
+          <fieldset class="formats">
+            <legend>Channels</legend>
+            <span class="small muted">None ticked means all channels. A listen-and-control app can skip, queue, cut in and change the station on these channels, but not change settings, sources or the schedule.</span>
+            <div class="row gap" data-pair-channels></div>
+          </fieldset>
+          <div><button class="primary">Show pairing code</button></div>
+        </form>
+        <div id="pair-box" class="pair-box" hidden>
+          <div class="pair-qr" id="pair-qr"></div>
+          <div class="stack">
+            <p>Scan this with the rRadio app, or enter the code by hand.</p>
+            <p class="pair-code" id="pair-code"></p>
+            <p class="small muted">Server <code id="pair-server"></code> · <span id="pair-expires"></span></p>
+            <div><button type="button" class="small-btn" id="btn-pair-cancel">Cancel</button></div>
+          </div>
+        </div>
+        <h3>Paired</h3>
+        <div id="devices-list" class="stack"></div>
+      </div>
       <div class="card">
         <h2>Backup, export and import</h2>
         <p class="muted">Everything here is stored in <code>config.yaml</code> in the data volume. You can edit it by hand; changes are picked up automatically.</p>

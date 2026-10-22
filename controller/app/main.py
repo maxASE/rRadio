@@ -12,7 +12,9 @@ import secrets
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlencode
 
+import segno
 import yaml
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -20,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Res
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
+from . import devices as devmod
 from . import media, transfer
 from .art import find_station_logo, image_file, save_image
 from .config import SECRET_MASK, Config, ConfigStore, dump
@@ -42,7 +45,9 @@ ICECAST_PUBLIC_PORT = os.environ.get("ICECAST_PUBLIC_PORT", "8000")
 WIDGET_PUBLIC = os.environ.get("WIDGET_PUBLIC", "").lower() in ("1", "true", "yes")
 
 store = ConfigStore()
-engine = Engine(store, Store(), Liquidsoap())
+state = Store()
+devices = state.devices
+engine = Engine(store, state, Liquidsoap())
 
 
 @asynccontextmanager
@@ -55,10 +60,32 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Pirate Radio", lifespan=lifespan, docs_url="/api/docs", redoc_url=None)
 
 
+# What a "member" device may call; everything else needs an admin device or the UI password.
+MEMBER_ROUTES = {
+    "GET": re.compile(r"/api/(status|widget|me|art/.+|images/.+)"),
+    "POST": re.compile(r"/api/(skip|program/end|play-url|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire)"),
+    "DELETE": re.compile(r"/api/queue/.+"),
+}
+
+
 @app.middleware("http")
 async def basic_auth(request: Request, call_next):
-    """Optional password for the UI. Playlist links and the logo stay open for players and dashboards."""
-    open_paths = ("/listen.", "/healthz", "/static/logo.svg", "/static/apple-touch-icon.png", "/api/art/now/") + (("/api/widget",) if WIDGET_PUBLIC else ())
+    """Optional password for the UI, or a device key from an app (Authorization: Bearer).
+    Playlist links and the logo stay open for players and dashboards."""
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        dev = await run_in_threadpool(devices.by_token, auth[7:].strip())
+        if dev is None:
+            return JSONResponse({"detail": "unknown or removed device key; pair the app again"}, status_code=401)
+        rule = MEMBER_ROUTES.get(request.method)
+        if dev.role != "admin" and not (rule and rule.fullmatch(request.url.path)):
+            return JSONResponse({"detail": "this device is not allowed to do that"}, status_code=403)
+        token = devmod.current.set(dev)
+        try:
+            return await call_next(request)
+        finally:
+            devmod.current.reset(token)
+    open_paths = ("/listen.", "/healthz", "/static/logo.svg", "/static/apple-touch-icon.png", "/api/art/now/", "/api/pair") + (("/api/widget",) if WIDGET_PUBLIC else ())
     if UI_PASSWORD and not request.url.path.startswith(open_paths):
         ok = False
         auth = request.headers.get("authorization", "")
@@ -73,10 +100,21 @@ async def basic_auth(request: Request, call_next):
     return await call_next(request)
 
 
+def restricted() -> devmod.Device | None:
+    """The app device behind this request if it is limited to some channels or actions."""
+    dev = devmod.current.get()
+    return dev if dev and dev.role != "admin" else None
+
+
 def channel_or_404(cid: str | None):
+    dev = restricted()
+    if cid is None and dev and dev.channels:  # default to the device's first channel
+        cid = next((c.id for c in store.config.channels if dev.may_use(c.id)), None)
     ch = store.config.channel(cid)
     if ch is None:
         raise HTTPException(404, "unknown channel")
+    if dev and not dev.may_use(ch.id):
+        raise HTTPException(403, "this device may not use that channel")
     return ch
 
 
@@ -159,7 +197,13 @@ async def pls(request: Request, fmt: str = "mp3", channel: str | None = None):
 @app.get("/api/status")
 async def status(request: Request, channel: str | None = None):
     """What is on air on one channel (the first one if none is given)."""
+    dev = restricted()
+    if dev:
+        channel = channel_or_404(channel).id
     data = engine.status(channel)
+    if dev:
+        data["channels"] = [c for c in data["channels"] if dev.may_use(c["id"])]
+        data["incoming"] = [i for i in data["incoming"] if dev.may_use(i["channel"])]
     data["streams"] = stream_urls(request, data.get("channel", {}).get("id"))
     for c in data.get("channels", []):
         urls = stream_urls(request, c["id"])
@@ -171,7 +215,7 @@ async def status(request: Request, channel: str | None = None):
 @app.get("/api/widget")
 async def widget(channel: str | None = None):
     """Read-only summary for dashboards (e.g. Homepage's customapi widget)."""
-    return engine.widget(channel)
+    return engine.widget(channel_or_404(channel).id if restricted() else channel)
 
 
 @app.get("/api/config")
@@ -250,6 +294,7 @@ class StationChoice(BaseModel):
 
 @app.post("/api/station")
 async def choose_station(body: StationChoice):
+    channel_or_404(body.channel)
     cfg = store.config.model_copy(deep=True)
     ch = cfg.channel(body.channel)
     if ch is None or body.id not in {s.id for s in ch.stations}:
@@ -277,6 +322,10 @@ async def skip(channel: str | None = None):
 
 @app.delete("/api/queue/{key:path}")
 async def remove(key: str):
+    dev = restricted()
+    it = next((i for i in engine.items if i.uid == key), None)
+    if dev and it and not dev.may_use(it.channel):
+        raise HTTPException(403, "this device may not use that channel")
     if not engine.remove(key):
         raise HTTPException(404, "not in queue or already on air")
     return {"ok": True}
@@ -528,6 +577,10 @@ async def spot_info(spot_id: str):
 @app.post("/api/spots/{spot_id}/fire")
 async def fire_spot(spot_id: str):
     """Play a spot now, ignoring its schedule."""
+    dev = restricted()
+    found = store.config.spot(spot_id)
+    if dev and found and not dev.may_use(found[0].id):
+        raise HTTPException(403, "this device may not use that channel")
     try:
         await engine.fire_spot(spot_id)
     except LookupError as e:
@@ -561,3 +614,111 @@ async def title_check(body: TitleCheck):
         except re.error as e:
             raise HTTPException(422, f"bad pattern {pat!r}: {e}")
     return out
+
+
+# --- app devices -------------------------------------------------------------------
+
+
+def _check_channels(ids: list[str]) -> list[str]:
+    known = {c.id for c in store.config.channels}
+    bad = [i for i in ids if i not in known]
+    if bad:
+        raise HTTPException(422, f"unknown channel: {', '.join(bad)}")
+    return ids
+
+
+def _channels_of(dev: devmod.Device | None) -> list[dict]:
+    return [{"id": c.id, "name": c.name, "mount": c.mount}
+            for c in store.config.channels if dev is None or dev.may_use(c.id)]
+
+
+@app.get("/api/devices")
+async def list_devices():
+    """Paired apps and pairing codes still waiting to be scanned."""
+    return {
+        "devices": [d.public() for d in await run_in_threadpool(devices.list)],
+        "pending": [{"code": p.code, "name": p.name, "role": p.role, "channels": p.channels, "expires": p.expires}
+                    for p in devices.pending()],
+        "password_set": bool(UI_PASSWORD),
+    }
+
+
+class PairStart(BaseModel):
+    name: str = ""
+    role: str = "member"
+    channels: list[str] = []
+    server: str = ""  # the address the app should use; the UI sends its own origin
+
+
+@app.post("/api/devices/pair")
+async def start_pairing(body: PairStart, request: Request):
+    """A one-time code (valid 10 minutes) and a QR code for the app to scan."""
+    try:
+        p = devices.start_pairing(body.name, body.role, _check_channels(body.channels))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    server = (body.server.strip() or str(request.base_url)).rstrip("/")
+    uri = "rradio://pair?" + urlencode({"server": server, "code": p.code})
+    qr = segno.make(uri, error="m").svg_inline(scale=5, border=2, dark="#000", light="#fff")
+    return {"code": p.code, "expires": p.expires, "server": server, "uri": uri, "qr_svg": qr}
+
+
+@app.delete("/api/devices/pair/{code}")
+async def cancel_pairing(code: str):
+    devices.cancel_pairing(code)
+    return {"ok": True}
+
+
+class DeviceEdit(BaseModel):
+    name: str | None = None
+    role: str | None = None
+    channels: list[str] | None = None
+
+
+@app.patch("/api/devices/{did}")
+async def edit_device(did: str, body: DeviceEdit):
+    try:
+        dev = await run_in_threadpool(devices.update, did, body.name, body.role,
+                                      None if body.channels is None else _check_channels(body.channels))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    if dev is None:
+        raise HTTPException(404, "unknown device")
+    return dev.public()
+
+
+@app.delete("/api/devices/{did}")
+async def remove_device(did: str):
+    """Revoke a device: its key stops working at once."""
+    if not await run_in_threadpool(devices.delete, did):
+        raise HTTPException(404, "unknown device")
+    return {"ok": True}
+
+
+class PairRedeem(BaseModel):
+    code: str
+    device_name: str = ""
+
+
+@app.post("/api/pair")
+async def pair(body: PairRedeem, request: Request):
+    """Called by the app after scanning the QR code. Open without the UI password:
+    the one-time code is the proof. The key is returned only here."""
+    try:
+        dev, token = await run_in_threadpool(devices.redeem, body.code, body.device_name)
+    except PermissionError as e:
+        raise HTTPException(429, str(e))
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    log.info("paired device %s (%s, %s)", dev.name, dev.id, dev.role)
+    return {"token": token, "device": dev.public(), "station_name": store.config.settings.station_name,
+            "channels": _channels_of(dev), "streams": {c["id"]: stream_urls(request, c["id"]) for c in _channels_of(dev)}}
+
+
+@app.get("/api/me")
+async def me(request: Request):
+    """Who is asking: the app's device (with its role and channels), or the web UI."""
+    dev = devmod.current.get()
+    return {"device": dev.public() if dev else None, "role": dev.role if dev else "admin",
+            "station_name": store.config.settings.station_name,
+            "channels": _channels_of(dev), "streams": {c["id"]: stream_urls(request, c["id"]) for c in _channels_of(dev)}}
