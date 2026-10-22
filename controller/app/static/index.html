@@ -205,7 +205,8 @@
               </label>
             </div>
             <div data-for="feed" class="hidden">
-              <input name="feed_url" type="url" placeholder="RSS feed URL, e.g. Tagesschau in 100 Sekunden">
+              <span class="row gap"><input name="feed_url" type="url" class="grow" placeholder="RSS feed URL, e.g. Tagesschau in 100 Sekunden"><button type="button" id="btn-check-feed">Check feed</button></span>
+              <span class="small" id="feed-result"></span>
               <label class="check"><input type="checkbox" name="only_new" checked> Skip if there is no new episode since last time</label>
             </div>
             <div class="small muted">Picture while it plays: a feed uses its own cover. Set one here to use your own instead.</div>

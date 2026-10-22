@@ -27,11 +27,11 @@ from . import API_VERSION, __version__
 from . import devices as devmod
 from . import media, transfer
 from .art import find_station_logo, image_file, save_image
-from .config import SECRET_MASK, Config, ConfigStore, dump
-from .engine import Engine
+from .config import SECRET_MASK, Config, ConfigStore, Podcast, dump
+from .engine import Engine, short_error
 from .liq import Liquidsoap
 from .navidrome import Navidrome
-from .sources import Invidious, Item, cache_dir, feed_title, video_id_from_url
+from .sources import Invidious, Item, cache_dir, feed_title, podcast_latest, video_id_from_url
 from .sessions import COOKIE, DAYS
 from .store import Store
 from .titles import peek
@@ -549,6 +549,19 @@ async def resolve_podcast(body: Lookup):
         raise HTTPException(502, f"{type(e).__name__}: {e}")
 
 
+@app.post("/api/feeds/check")
+async def check_feed(body: Lookup):
+    """The newest episode of a feed, to try a spot's feed URL before saving."""
+    try:
+        eps = await podcast_latest(Podcast(name="check", url=body.query.strip(), max_minutes=0))
+    except Exception as e:
+        raise HTTPException(502, short_error(e))
+    if not eps:
+        raise HTTPException(502, "the feed has no audio episodes")
+    newest = max(eps, key=lambda i: i.published or 0)
+    return {"title": newest.title, "published": newest.published, "episodes": len(eps)}
+
+
 class InvidiousTest(BaseModel):
     url: str | None = None
 
@@ -707,7 +720,7 @@ async def fire_spot(spot_id: str):
     except LookupError as e:
         raise HTTPException(404, str(e))
     except Exception as e:
-        raise HTTPException(502, f"{type(e).__name__}: {e}")
+        raise HTTPException(502, short_error(e))
     return {"ok": True}
 
 

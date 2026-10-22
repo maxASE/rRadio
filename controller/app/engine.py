@@ -127,6 +127,17 @@ def show_step(p: Program, show: dict, title: str | None, now: float) -> str | No
     return None
 
 
+def spot_key(s: Spot) -> str:
+    """What a spot plays; an error is shown only while this stays the same."""
+    return s.feed_url if s.content == "feed" else "\n".join(s.files)
+
+
+def short_error(e: Exception) -> str:
+    if isinstance(e, httpx.HTTPStatusError):
+        return f"{e.response.status_code} {e.response.reason_phrase} from {e.request.url}"
+    return (str(e) or type(e).__name__)[:300]
+
+
 def next_program(ch: Channel, now: datetime) -> dict | None:
     best = None
     for p in ch.programs:
@@ -433,7 +444,7 @@ class Engine:
                                   art=spot.image or newest.art, **common))
             ss["error"] = ""
         except Exception as e:
-            ss["error"] = (str(e) or type(e).__name__)[:300]
+            ss["error"], ss["error_for"] = short_error(e), spot_key(spot)
             log.warning("spot %s failed: %s", spot.name, ss["error"])
             if manual:
                 raise
@@ -1024,7 +1035,8 @@ class Engine:
             out[s.id] = {
                 "next": nxt.isoformat() if nxt else None,
                 "last": ss.get("last"),
-                "error": ss.get("error", ""),
+                # An error from before the spot was edited no longer applies.
+                "error": ss.get("error", "") if ss.get("error_for") == spot_key(s) else "",
                 "songs": ss.get("songs", 0),
             }
         return out
