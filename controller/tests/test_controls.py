@@ -134,3 +134,48 @@ def test_news_can_be_queued_again(admin, app_main):
     queued = next(i for i in app_main.engine.items if i.uid == r.json()["key"])
     assert queued.media == "https://example.com/n2.mp3"
     app_main.engine.items.remove(queued)
+
+def test_a_kept_program_is_recorded_and_listened_back(admin, app_main, ram_dir):
+    import asyncio
+
+    from app.config import Program
+
+    engine = app_main.engine
+    ch = engine.config.channels[0]
+    cs = engine.state(ch.id)
+    show = Program(name="Live am Morgen", url="http://radio.example/live", keep_day=True)
+
+    async def fake_record(p, path):  # no network in tests: write a little "audio"
+        path.write_bytes(b"ID3" + b"\0" * 2000)
+        await asyncio.sleep(3600)
+
+    async def run():
+        engine._record = fake_record
+        replay = engine._start_recording(ch, cs, show)
+        await asyncio.sleep(0.01)
+        task = cs.recording
+        engine._stop_recording(cs)
+        await asyncio.sleep(0)
+        return replay, task
+
+    try:
+        replay, task = asyncio.run(run())
+    finally:
+        del engine._record
+    assert task.cancelled() and cs.recording is None
+    assert replay["path"].startswith(str(ram_dir / "replay"))
+    engine.store.add_history("program", show.name, show.name, "started", channel=ch.id, replay=replay)
+    entry = next(h for h in admin.get("/api/status", params={"channel": ch.id}).json()["history"]
+                 if h["title"] == show.name and h["replay"])
+    r = admin.get(f"/api/history/{entry['id']}/audio")
+    assert r.status_code == 200 and r.content.startswith(b"ID3")
+    # A three-hour show is for listening back, not for putting on the radio again.
+    assert admin.post(f"/api/history/{entry['id']}/play-next").status_code == 409
+
+
+def test_programs_are_not_kept_unless_asked(app_main):
+    from app.config import Program
+
+    engine = app_main.engine
+    ch = engine.config.channels[0]
+    assert engine._start_recording(ch, engine.state(ch.id), Program(name="P", url="http://radio.example/live")) is None

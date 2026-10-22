@@ -17,6 +17,7 @@ import logging
 import os
 import random
 import re
+import shutil
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -40,6 +41,8 @@ from .sources import (
     prune_replays,
     purge_cache,
     REPLAY_KEEP,
+    USER_AGENT,
+    cache_dir,
 )
 from .store import Store
 from .titles import Watchers
@@ -51,6 +54,7 @@ CHANNELS_FILE = Path(os.environ.get("CHANNELS_FILE", "/data/channels.json"))
 TICK = 1.0
 INIT_MARK = "__init__"
 HOLD_MAX = 600  # a spot waits at most this long for a song change
+RECORD_MIN_FREE = 64 << 20  # a kept program stops recording when less space than this is left
 RESTART_EVERY = 30  # seconds between Liquidsoap restarts for channel changes
 
 
@@ -231,6 +235,7 @@ class ChannelState:
     shows: dict = field(default_factory=dict)  # title-triggered program id -> {"on", "ok", "why"}
     last_clip: tuple | None = None  # (title, artist) of the last clip pushed, to spot its metadata lingering
     ended: dict = field(default_factory=dict)  # program id -> {"until": window end, "at": when} for programs ended by hand
+    recording: asyncio.Task | None = None  # the program on air being kept for 24 h
 
 
 class Engine:
@@ -274,6 +279,8 @@ class Engine:
     async def stop(self) -> None:
         for t in self._tasks:
             t.cancel()
+        for cs in self.channels.values():
+            self._stop_recording(cs)
         self.titles.stop()
 
     @property
@@ -754,6 +761,7 @@ class Engine:
             self.store.add_history("program", p.name, p.name, "ended", why, channel=ch.id)
             log.info("Program %s ended on %s (%s)", p.name, ch.name, why)
             cs.on_program = None
+            self._stop_recording(cs)
 
         def holds(p: Program, it: Item) -> bool:
             return not it.during_programs and not p.cutins_interrupt
@@ -782,11 +790,64 @@ class Engine:
         if due and cs.on_program is None and not on_air_clips:
             cs.on_program = due
             why = cs.shows.get(due.program.id, {}).get("why", "") if due.program.trigger == "title" else ""
-            self.store.add_history("program", due.program.name, due.program.name, "started", why, channel=ch.id)
+            replay = self._start_recording(ch, cs, due.program)
+            self.store.add_history("program", due.program.name, due.program.name, "started", why, channel=ch.id,
+                                   replay=replay)
             log.info("Program %s started on %s%s", due.program.name, ch.name, f" ({why})" if why else "")
 
         base = cs.on_program.program if cs.on_program else ch.station()
         await self._set_base(ch, cs, st, base)
+
+    # --- programs kept for 24 h ----------------------------------------------------
+
+    def _start_recording(self, ch: Channel, cs: ChannelState, p: Program) -> dict | None:
+        """Records a program marked "keep for 24 hours" from its own stream, next to the
+        kept voice messages, so the apps can listen back to it. The history entry of its
+        start points at the file, which grows until the program ends."""
+        self._stop_recording(cs)
+        if not p.keep_day or p.kind != "stream" or not p.url:
+            return None
+        prune_replays(REPLAY_KEEP)
+        folder = cache_dir(self.config.settings.cache_in_ram) / "replay"
+        folder.mkdir(parents=True, exist_ok=True)
+        ext = next((e for e in ("aac", "m4a", "ogg", "opus") if p.url.lower().split("?")[0].endswith("." + e)), "mp3")
+        path = folder / f"program-{ch.id}-{int(time.time())}.{ext}"
+        path.touch()
+        cs.recording = asyncio.create_task(self._record(p, path))
+        log.info("Keeping program %s on %s for 24 h in %s", p.name, ch.name, path)
+        return {"path": str(path), "until": time.time() + REPLAY_KEEP}
+
+    def _stop_recording(self, cs: ChannelState) -> None:
+        if cs.recording:
+            cs.recording.cancel()
+            cs.recording = None
+
+    async def _record(self, p: Program, path: Path) -> None:
+        """Copies the program's stream into `path` until cancelled, reconnecting after a
+        drop. Stops early when the RAM disk (or disk) gets nearly full."""
+        headers = {"User-Agent": USER_AGENT}
+        async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(30, read=60)) as client:
+            with path.open("ab") as out:
+                while True:
+                    try:
+                        async with client.stream("GET", p.url, headers=headers) as r:
+                            r.raise_for_status()
+                            unchecked = 0
+                            async for chunk in r.aiter_raw():
+                                out.write(chunk)
+                                unchecked += len(chunk)
+                                if unchecked > 1 << 20:  # about once a minute
+                                    unchecked = 0
+                                    out.flush()
+                                    if shutil.disk_usage(path.parent).free < RECORD_MIN_FREE:
+                                        log.warning("Stopped keeping %s: %s is nearly full", p.name, path.parent)
+                                        return
+                    except asyncio.CancelledError:
+                        raise
+                    except (httpx.HTTPError, OSError) as e:
+                        log.info("Keeping %s: stream dropped (%s), reconnecting", p.name, e)
+                    out.flush()
+                    await asyncio.sleep(5)
 
     # --- title-triggered programs ------------------------------------------------
 

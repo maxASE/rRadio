@@ -1079,7 +1079,7 @@ function daysLabel(days) {
 function programSummary(p) {
   const when = `${daysLabel(p.days)} · ${p.start}–${p.end}`;
   const how = p.trigger === "title" ? `while the stream title matches “${p.title_start || "?"}”` : "the whole window";
-  return `${when} · ${how} · ${p.cutins_interrupt ? "cut-ins may interrupt" : "cut-ins wait"}`;
+  return `${when} · ${how} · ${p.cutins_interrupt ? "cut-ins may interrupt" : "cut-ins wait"}${p.keep_day ? " · kept 24 h" : ""}`;
 }
 
 function renderPrograms() {
@@ -1116,6 +1116,9 @@ function renderPrograms() {
             el("label", { class: "check small" },
               el("input", { type: "checkbox", checked: !!p.cutins_interrupt, onchange: (e) => { p.cutins_interrupt = e.target.checked; saveConfig(); } }),
               "Let new video uploads and podcast episodes interrupt this program (otherwise they wait until it ends)"),
+            el("label", { class: "check small" },
+              el("input", { type: "checkbox", checked: !!p.keep_day, onchange: (e) => { p.keep_day = e.target.checked; saveConfig(); } }),
+              "Keep it for 24 hours, so the apps can listen back (recorded in RAM if downloads go there: about 60 MB per hour)"),
             titleTrigger(p),
           );
         })
