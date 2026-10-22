@@ -277,6 +277,54 @@ player at a stream: `http://<server>:8080/listen.m3u?fmt=aac`. Add
   the same user and password as HTTP Basic auth. The streams and playlist files
   stay open so players don't need a login.
 
+## HTTPS and remote access
+
+Phones and browsers increasingly insist on HTTPS: browsers only allow the
+microphone (voice messages) over HTTPS, and the iOS and Android apps refuse
+plain HTTP unless a server is explicitly allowed. Pick one of these:
+
+- **Tailscale (easiest, also gives remote access):** on the server run
+  `tailscale serve --bg 8080`. rRadio is then at
+  `https://<server>.<tailnet>.ts.net` with a real certificate, reachable only
+  from your own devices, at home and on the road. Add the streams with
+  `tailscale serve --bg --set-path /radio.mp3 http://127.0.0.1:8000/radio.mp3`
+  (one line per stream), or open them via the tailnet name and port 8000.
+- **Nginx Proxy Manager with your own domain:** on the proxy host, open the
+  *SSL* tab, request a Let's Encrypt certificate (a DNS challenge works for
+  hosts that aren't reachable from the internet) and tick *Force SSL*. Then set
+  `PUBLIC_STREAM_BASE=https://<your host>` in `.env`.
+- **Internal name like `rradio.hp`:** Let's Encrypt can't issue for it. Either
+  use the Tailscale name above, or create your own certificate (e.g. with
+  `mkcert`), upload it in NPM under *SSL Certificates › Custom*, and install
+  mkcert's root certificate on your phones.
+
+### Optional: client certificates (mTLS)
+
+With mTLS only devices holding a certificate you issued get through the proxy
+at all. rRadio needs no change; it is set up in Nginx Proxy Manager. It is
+extra work for every phone and browser, and Tailscale gives similar protection
+with less effort, so treat this as optional.
+
+```sh
+# a small certificate authority and one client certificate (repeat for each device)
+openssl req -x509 -newkey rsa:4096 -nodes -days 3650 -subj "/CN=rRadio clients" -keyout ca.key -out ca.pem
+openssl req -newkey rsa:2048 -nodes -subj "/CN=max-phone" -keyout phone.key -out phone.csr
+openssl x509 -req -in phone.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 825 -out phone.pem
+openssl pkcs12 -export -inkey phone.key -in phone.pem -certfile ca.pem -out phone.p12   # import this on the phone
+```
+
+Copy `ca.pem` into NPM's data folder (e.g. `data/custom_ssl/rradio-ca.pem`) and
+add to the proxy host's *Advanced* tab:
+
+```nginx
+ssl_client_certificate /data/custom_ssl/rradio-ca.pem;
+ssl_verify_client on;
+```
+
+Players such as Navidrome, Sonos or car radios can't present a certificate, so
+serve the streams from a second proxy host without mTLS (or straight from port
+8000) and point `PUBLIC_STREAM_BASE` at it.
+
 ## Voice messages
 
 On a channel's page, **Voice message › Record** records from the microphone;
@@ -444,6 +492,11 @@ Better: move local edits into `docker-compose.override.yml` (see
 [the example](docker-compose.override.example.yml)) so `git pull` never
 conflicts.
 
+Releases are tagged (`v1.0.0`, ...). To stay on a release instead of the
+newest code, use `git checkout v1.0.0` instead of `git pull`, or the image
+`ghcr.io/maxase/pirate-radio-controller:1.0.0`. `GET /healthz` shows the
+running `version` and the `api` level apps check.
+
 ## Resources
 
 Three small containers. In testing they used about 5 MB (Icecast), 70 MB
@@ -479,6 +532,14 @@ for example `GET /api/status` (now playing, queue), `GET /api/widget` (short
 summary for dashboards), `POST /api/skip` or `POST /api/program/end` (end the
 program on air early; it stays off until its window closes, the same as
 **End now** on a channel's page).
+
+`GET /healthz` and `GET /api/me` report `version` (the release, e.g. `1.0.0`)
+and `api` (currently `1`). `api` only goes up when an existing field or
+endpoint changes in a way that would break an app; new fields and endpoints
+don't change it, so apps should ignore fields they don't know.
+
+Tests for the API live in `controller/tests` and run in CI:
+`cd controller && pip install -r requirements.txt pytest && python -m pytest`.
 
 ## License
 
