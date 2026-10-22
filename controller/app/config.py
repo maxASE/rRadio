@@ -100,6 +100,7 @@ class Program(BaseSource):
     title_end: str = ""
     end_after_minutes: float = 3
     cutins_interrupt: bool = False  # new uploads and episodes may play during it
+    keep_day: bool = False  # record it (in RAM if downloads go there) for 24 h, to listen back in the apps
 
     _days = field_validator("days")(classmethod(lambda cls, v: _check_days(v)))
     _time = field_validator("start", "end")(classmethod(lambda cls, v: _check_time(v)))

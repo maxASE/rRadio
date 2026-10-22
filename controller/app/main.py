@@ -755,6 +755,8 @@ async def history_play_next(entry_id: int, channel: str | None = None):
     entry = state.entry(entry_id)
     if not entry or not entry["replay"]:
         raise HTTPException(404, "this can no longer be played again")
+    if entry["kind"] == "program":
+        raise HTTPException(409, "a kept program can only be listened to in the app, not put on the radio")
     ch = channel_or_404(channel or entry["channel"] or None)
     info = entry["replay"]
     it = Item(kind=entry["kind"], source_id="again", source_name=entry["source"], item_id=f"{entry_id}@{time.time()}",

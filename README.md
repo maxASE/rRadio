@@ -346,7 +346,13 @@ only, with `GET /api/history/<id>/audio` (the `id` and `replay` fields of the
 clips, podcast and news episodes and links are fetched again from their source. Voice
 messages exist nowhere else, so a copy is kept for 24 hours (in RAM or on disk,
 following the download setting); turn this off under **Settings › Keep voice
-messages for a day**. Inbox files and the live radio can't be played again.
+messages for a day**. Inbox files and the live radio can't be played again,
+except programs marked **Keep it for 24 hours** (Schedule › program): those are
+recorded from their stream while they run, into the RAM disk when downloads go
+there (about 60 MB per hour of MP3, so raise `RAM_CACHE_SIZE` to `1g` or more
+for long shows), and the apps can listen back from the program's "started"
+entry, even while it is still on air. Recording stops early if the RAM disk is
+nearly full.
 
 ## Apps and device keys
 
