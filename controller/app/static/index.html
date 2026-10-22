@@ -333,9 +333,18 @@
         </form>
       </div>
       <div class="card">
-        <h2>Config file</h2>
+        <h2>Backup, export and import</h2>
         <p class="muted">Everything here is stored in <code>config.yaml</code> in the data volume. You can edit it by hand; changes are picked up automatically.</p>
-        <a href="/api/config.yaml" class="button">Download config.yaml</a>
+        <div class="row gap">
+          <a href="/api/config.yaml" class="button">Download config.yaml</a>
+          <a href="/api/backup" class="button">Download full backup</a>
+        </div>
+        <p class="muted small">The full backup is a zip with the config, your own audio and uploaded pictures. To move one channel, use <em>Export channel</em> on its page instead. Neither includes the Navidrome password, history or downloaded clips.</p>
+        <form id="form-import" class="stack">
+          <label class="field">Import a channel export or a full backup <input name="file" type="file" accept=".zip,application/zip" required></label>
+          <label class="field">Name for the imported channel <input name="name" placeholder="optional; keeps the exported name"></label>
+          <div><button class="primary">Import</button> <span class="small" id="import-result"></span></div>
+        </form>
       </div>
     </section>
   </main>

@@ -356,6 +356,24 @@ Other `.env` settings: `TZ`, `STATION_NAME`, `DEFAULT_STATION_URL`,
 `UI_PORT`, `ICECAST_PORT`, `FADE_SECONDS` (fade length) and `CUTIN_GAIN_DB`
 (make cut-ins louder or quieter than the radio).
 
+## Moving channels and backups
+
+- **Export channel** (on a channel's page) downloads a zip with that channel:
+  its stations, programs (with title triggers), spots, the video channels
+  and podcasts it cuts in from, the own audio its spots play and uploaded
+  pictures.
+- **Settings › Import** adds it on another rRadio as a new channel, optionally
+  under a new name. Name and stream name get a number if they are taken,
+  sources that already exist there (same video channel or feed URL) are
+  reused, and if any audio file would overwrite a different file of the same
+  name, the import's audio goes into a folder named after the channel.
+- **Settings › Download full backup** is a zip with the whole config, all own
+  audio and pictures. Importing it replaces everything after a confirmation;
+  the old config is kept as `config.before-restore-<time>.yaml`.
+
+Neither includes the Navidrome password (set it again under Settings),
+history or downloaded clips. Navidrome stations refer to playlists by name.
+
 ## Upgrading
 
 ```sh
