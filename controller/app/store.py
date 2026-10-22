@@ -109,6 +109,18 @@ class Store:
         keys = ["id", "ts", "kind", "source", "title", "status", "detail"]
         return [{**dict(zip(keys, r)), "replay": replay_available(r[7])} for r in rows]
 
+    def entry(self, entry_id: int) -> dict | None:
+        """One history entry with its replay info (None if it can't be played again)."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT kind, source, title, channel, replay FROM history WHERE id = ?", (entry_id,)
+            ).fetchone()
+        if not row:
+            return None
+        kind, source, title, channel, replay = row
+        return {"kind": kind, "source": source, "title": title, "channel": channel,
+                "replay": json.loads(replay) if replay_available(replay) else None}
+
     def replay_of(self, entry_id: int) -> tuple[str, dict] | None:
         """(channel, replay info) of one history entry, if it can be listened to again."""
         with self._lock:

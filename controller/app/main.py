@@ -68,7 +68,7 @@ app = FastAPI(title="rRadio", version=__version__, lifespan=lifespan, docs_url="
 # What a "member" device may call; everything else needs an admin device or the UI password.
 MEMBER_ROUTES = {
     "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio)"),
-    "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire)"),
+    "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire|history/\d+/play-next)"),
     "DELETE": re.compile(r"/api/queue/.+"),
 }
 
@@ -746,6 +746,23 @@ async def history_audio(entry_id: int, request: Request):
         await upstream.aclose()
     await client.aclose()
     raise HTTPException(502, "the source of this clip didn't answer")
+
+
+@app.post("/api/history/{entry_id}/play-next")
+async def history_play_next(entry_id: int, channel: str | None = None):
+    """"Play next": a clip from the history goes back into the queue of its channel (or
+    of `channel`), ahead of ordinary clips, and plays for everyone listening."""
+    entry = state.entry(entry_id)
+    if not entry or not entry["replay"]:
+        raise HTTPException(404, "this can no longer be played again")
+    ch = channel_or_404(channel or entry["channel"] or None)
+    info = entry["replay"]
+    it = Item(kind=entry["kind"], source_id="again", source_name=entry["source"], item_id=f"{entry_id}@{time.time()}",
+              title=entry["title"], media=info.get("media") or info["path"], channel=ch.id, priority=1, during_programs=True)
+    if info.get("path"):
+        it.path, it.keep_file = info["path"], True
+    engine.enqueue(it)
+    return it.public()
 
 
 @app.get("/api/spots/{spot_id}/info")
