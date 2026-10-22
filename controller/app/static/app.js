@@ -980,24 +980,54 @@ $("#btn-new-program").addEventListener("click", () => {
   $("#form-program").scrollIntoView({ behavior: "smooth", block: "center" });
 });
 
+// Programs show as a summary row; Edit opens the full form in place.
+const openPrograms = new Set();
+
+function daysLabel(days) {
+  if (days.length === 7) return "every day";
+  const cap = (d) => d[0].toUpperCase() + d.slice(1);
+  if (days.join() === "mon,tue,wed,thu,fri") return "Mon–Fri";
+  if (days.join() === "sat,sun") return "Sat–Sun";
+  return days.map(cap).join(" ");
+}
+
+function programSummary(p) {
+  const when = `${daysLabel(p.days)} · ${p.start}–${p.end}`;
+  return p.trigger === "title"
+    ? `${when} · while the stream title matches “${p.title_start || "?"}”`
+    : `${when} · the whole window`;
+}
+
 function renderPrograms() {
   const ch = channel();
   $("#programs").replaceChildren(
     ...(ch.programs.length
       ? ch.programs.map((p) => {
+          const open = openPrograms.has(p.id);
+          const toggle = () => { open ? openPrograms.delete(p.id) : openPrograms.add(p.id); renderPrograms(); };
+          const head = el("div", { class: "row between" },
+            el("label", { class: "check" },
+              el("input", { type: "checkbox", checked: p.enabled, onchange: (e) => { p.enabled = e.target.checked; saveConfig(p.enabled ? "Enabled" : "Paused"); } }),
+              el("strong", {}, p.name)),
+            el("span", { class: "row gap" },
+              el("button", { class: open ? "small-btn primary" : "small-btn", onclick: toggle }, open ? "Done" : "Edit"),
+              el("button", { class: "small-btn danger", onclick: () => { if (!confirm(`Remove ${p.name}?`)) return; openPrograms.delete(p.id); ch.programs = ch.programs.filter((x) => x !== p); saveConfig("Program removed"); } }, "Remove")),
+          );
+          if (!open) {
+            return el("li", { "data-program": p.id },
+              head,
+              el("div", { class: "small muted title" }, baseLabel(p)),
+              el("div", { class: "small muted" }, programSummary(p), el("span", { "data-f": "pmeta" })),
+            );
+          }
           const days = el("div", { class: "days" });
           daysPicker(days, p.days);
           days.addEventListener("change", () => { p.days = pickedDays(days); saveConfig(); });
           const time = (k) => el("input", { type: "time", value: p[k], "aria-label": k === "start" ? "Starts" : "Ends", onchange: (e) => { p[k] = e.target.value; saveConfig(); } });
-          return el("li", { "data-program": p.id },
-            el("div", { class: "row between" },
-              el("label", { class: "check" },
-                el("input", { type: "checkbox", checked: p.enabled, onchange: (e) => { p.enabled = e.target.checked; saveConfig(); } }),
-                el("strong", {}, p.name)),
-              el("span", { class: "row gap" }, time("start"), "–", time("end"),
-                el("button", { class: "small-btn danger", onclick: () => { if (!confirm(`Remove ${p.name}?`)) return; ch.programs = ch.programs.filter((x) => x !== p); saveConfig("Program removed"); } }, "Remove")),
-            ),
+          return el("li", { "data-program": p.id, class: "editing" },
+            head,
             el("div", { class: "small muted title" }, baseLabel(p)),
+            el("div", { class: "row gap" }, el("label", { class: "inline" }, "From", time("start")), el("label", { class: "inline" }, "to", time("end"))),
             days,
             titleTrigger(p),
           );
@@ -1072,6 +1102,10 @@ function renderProgramMeta() {
     if (st.title != null) parts.push(` · now: ${st.title || "(empty)"}`);
     if (st.error) parts.push(el("span", { class: "bad" }, ` · ${st.error}`));
     if (meta) meta.replaceChildren(...parts);
+    const pm = $('[data-f="pmeta"]', li);
+    if (pm) pm.replaceChildren(
+      st.on_air ? el("span", { class: "ok" }, " · on air") : st.window_open ? " · window open" : "",
+      st.error ? el("span", { class: "bad" }, ` · ${st.error}`) : "");
     const log = $('[data-f="tlog"]', li);
     if (log) log.replaceChildren(...(st.log.length
       ? st.log.map((t) => el("li", {}, el("span", { class: "muted" }, hm(t.ts) + "  "), t.title || "(empty)"))
