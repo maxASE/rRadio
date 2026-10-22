@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in · rRadio</title>
+  <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-page">
+  <main>
+    <form id="form-login" class="card login-card stack">
+      <div class="brand">
+        <img class="logo" src="/static/logo.svg" alt="" width="40" height="40">
+        <h1>rRadio</h1>
+      </div>
+      <label class="field">User name <input name="username" value="admin" autocomplete="username" autocapitalize="none" spellcheck="false"></label>
+      <label class="field">Password <input name="password" type="password" autocomplete="current-password" required autofocus></label>
+      <button class="primary">Log in</button>
+      <p class="small bad" id="login-error" role="alert" hidden></p>
+      <p class="small muted">The user name is <code>admin</code> unless <code>UI_USERNAME</code> is set; the password is <code>UI_PASSWORD</code> from <code>.env</code>.</p>
+    </form>
+  </main>
+  <script>
+    "use strict";
+    const form = document.getElementById("form-login");
+    const err = document.getElementById("login-error");
+    // Only go back to a page on this site after logging in.
+    const raw = new URLSearchParams(location.search).get("next") || "/";
+    // A redirect from the server keeps the #/view part on this page's address; carry it along.
+    const next = (raw.startsWith("/") && !raw.startsWith("//") ? raw : "/") + (raw.includes("#") ? "" : location.hash);
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const btn = form.querySelector("button");
+      btn.disabled = true;
+      err.hidden = true;
+      try {
+        const res = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: form.username.value, password: form.password.value }),
+        });
+        if (res.ok) { location.replace(next); return; }
+        const data = await res.json().catch(() => ({}));
+        err.textContent = data.detail || `Log-in failed (${res.status})`;
+        err.hidden = false;
+        form.password.select();
+      } catch (e) {
+        err.textContent = `Can't reach rRadio: ${e.message}`;
+        err.hidden = false;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

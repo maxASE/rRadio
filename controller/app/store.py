@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from .devices import Devices
+from .sessions import Sessions
 
 DB_PATH = Path(os.environ.get("STATE_DB", "/data/state.db"))
 
@@ -42,6 +43,7 @@ class Store:
             if "channel" not in cols:
                 self._db.execute("ALTER TABLE history ADD COLUMN channel TEXT NOT NULL DEFAULT ''")
         self.devices = Devices(self._db, self._lock)
+        self.sessions = Sessions(self._db, self._lock)
 
     def has_any(self, source: str) -> bool:
         with self._lock:

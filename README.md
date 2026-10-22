@@ -270,8 +270,12 @@ player at a stream: `http://<server>:8080/listen.m3u?fmt=aac`. Add
   left empty, the stream links follow whatever hostname you opened the UI with,
   so the same setup works on the LAN and on your tailnet. Alternatively run
   `tailscale serve` in front of nginx for HTTPS.
-- **Password:** set `UI_PASSWORD` to protect the web UI. The streams and
-  playlist files stay open so players don't need a login.
+- **Password:** set `UI_PASSWORD` to protect the web UI. The browser then shows
+  a log-in page (user `admin` unless `UI_USERNAME` is set) and stays logged in
+  for 30 days; **Log out** is at the top right. After 10 wrong passwords from one
+  address, log-in pauses for five minutes. Scripts and dashboards can still send
+  the same user and password as HTTP Basic auth. The streams and playlist files
+  stay open so players don't need a login.
 
 ## Apps and device keys
 

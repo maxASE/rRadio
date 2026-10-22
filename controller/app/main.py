@@ -12,13 +12,13 @@ import secrets
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import segno
 import yaml
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
@@ -30,6 +30,7 @@ from .engine import Engine
 from .liq import Liquidsoap
 from .navidrome import Navidrome
 from .sources import Invidious, Item, feed_title, video_id_from_url
+from .sessions import COOKIE, DAYS
 from .store import Store
 from .titles import peek
 
@@ -47,6 +48,7 @@ WIDGET_PUBLIC = os.environ.get("WIDGET_PUBLIC", "").lower() in ("1", "true", "ye
 store = ConfigStore()
 state = Store()
 devices = state.devices
+sessions = state.sessions
 engine = Engine(store, state, Liquidsoap())
 
 
@@ -85,19 +87,26 @@ async def basic_auth(request: Request, call_next):
             return await call_next(request)
         finally:
             devmod.current.reset(token)
-    open_paths = ("/listen.", "/healthz", "/static/logo.svg", "/static/apple-touch-icon.png", "/api/art/now/", "/api/pair") + (("/api/widget",) if WIDGET_PUBLIC else ())
-    if UI_PASSWORD and not request.url.path.startswith(open_paths):
-        ok = False
-        auth = request.headers.get("authorization", "")
-        if auth.lower().startswith("basic "):
+    path = request.url.path
+    open_paths = ("/listen.", "/healthz", "/static/", "/login", "/api/login", "/api/art/now/", "/api/pair") + (("/api/widget",) if WIDGET_PUBLIC else ())
+    if UI_PASSWORD and not path.startswith(open_paths):
+        # The browser logs in on /login and gets a cookie; dashboards and scripts may send Basic auth.
+        ok = await run_in_threadpool(sessions.valid, request.cookies.get(COOKIE, ""))
+        if not ok and auth.lower().startswith("basic "):
             try:
                 user, _, pw = base64.b64decode(auth[6:]).decode().partition(":")
-                ok = secrets.compare_digest(user, UI_USER) and secrets.compare_digest(pw, UI_PASSWORD)
+                ok = credentials_ok(user, pw)
             except Exception:
                 ok = False
         if not ok:
-            return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="Pirate Radio"'})
+            if request.method == "GET" and not path.startswith("/api/"):
+                return RedirectResponse("/login" + ("" if path == "/" else "?next=" + quote(path)), status_code=303)
+            return JSONResponse({"detail": "log in first"}, status_code=401)
     return await call_next(request)
+
+
+def credentials_ok(user: str, pw: str) -> bool:
+    return secrets.compare_digest(user.encode(), UI_USER.encode()) and secrets.compare_digest(pw.encode(), UI_PASSWORD.encode())
 
 
 def restricted() -> devmod.Device | None:
@@ -159,6 +168,45 @@ INDEX_HTML = _versioned_index()
 @app.get("/", include_in_schema=False)
 async def index():
     return Response(INDEX_HTML, media_type="text/html")
+
+
+@app.get("/login", include_in_schema=False)
+async def login_page(request: Request):
+    if not UI_PASSWORD or await run_in_threadpool(sessions.valid, request.cookies.get(COOKIE, "")):
+        return RedirectResponse("/", status_code=303)
+    return FileResponse(STATIC / "login.html", headers={"Cache-Control": "no-cache"})
+
+
+class Login(BaseModel):
+    username: str = ""
+    password: str = ""
+
+
+@app.post("/api/login")
+async def login(body: Login, request: Request):
+    """Check the UI user name and password and set a session cookie (30 days)."""
+    if not UI_PASSWORD:
+        return {"ok": True}
+    addr = request.client.host if request.client else ""
+    if sessions.blocked(addr):
+        raise HTTPException(429, "Too many wrong passwords. Wait five minutes and try again.")
+    if not credentials_ok(body.username.strip() or UI_USER, body.password):
+        sessions.failed(addr)
+        log.warning("wrong UI password from %s", addr)
+        raise HTTPException(401, "Wrong user name or password.")
+    token = await run_in_threadpool(sessions.create)
+    resp = JSONResponse({"ok": True})
+    https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "") == "https"
+    resp.set_cookie(COOKIE, token, max_age=DAYS * 86400, httponly=True, samesite="lax", secure=https, path="/")
+    return resp
+
+
+@app.post("/api/logout")
+async def logout(request: Request):
+    await run_in_threadpool(sessions.end, request.cookies.get(COOKIE, ""))
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(COOKIE, path="/")
+    return resp
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
@@ -719,6 +767,6 @@ async def pair(body: PairRedeem, request: Request):
 async def me(request: Request):
     """Who is asking: the app's device (with its role and channels), or the web UI."""
     dev = devmod.current.get()
-    return {"device": dev.public() if dev else None, "role": dev.role if dev else "admin",
+    return {"device": dev.public() if dev else None, "role": dev.role if dev else "admin", "login": bool(UI_PASSWORD),
             "station_name": store.config.settings.station_name,
             "channels": _channels_of(dev), "streams": {c["id"]: stream_urls(request, c["id"]) for c in _channels_of(dev)}}
