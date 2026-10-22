@@ -186,7 +186,8 @@ function setChannel(id) {
   try { localStorage.setItem("channel", id); } catch {}
   status = null;
   renderConfig();
-  refresh();
+  connectLive();
+  if (!live) refresh();
 }
 
 function route() {
@@ -343,7 +344,6 @@ function nowWhy(np) {
 function renderStatus() {
   const s = status;
   if (!s || !cfg) return;
-  setServerTime(s.time);
   const np = s.now;
   const multi = s.channels.length > 1;
   const title0 = s.station_name;
@@ -361,10 +361,58 @@ function renderStatus() {
   updateListenButtons();
 }
 
+// --- live feed -----------------------------------------------------------------------
+// /api/events sends the status once and then only when something changes. While it
+// is connected nothing polls; clip times are counted up here. Without it (old
+// browser, proxy trouble) the page falls back to asking every 3 seconds.
+
+let live = null; // the EventSource while one is open or connecting
+let liveOk = false; // it is connected and delivering
+let advancedAt = 0;
+
+function gotStatus(s) {
+  status = s;
+  advancedAt = Date.now();
+  setServerTime(s.time);
+  renderStatus();
+}
+
+function connectLive() {
+  if (live) live.close();
+  live = null;
+  liveOk = false;
+  if (!window.EventSource || document.hidden) return;
+  const es = new EventSource(`/api/events?${chq()}`);
+  live = es;
+  es.onopen = () => { if (live === es) liveOk = true; };
+  es.onmessage = (ev) => { if (live === es) { liveOk = true; gotStatus(JSON.parse(ev.data)); } };
+  es.onerror = () => {
+    if (live !== es) return;
+    liveOk = false; // the browser retries by itself; until then, poll
+    if (es.readyState === EventSource.CLOSED) { live = null; refresh(); } // e.g. logged out: refresh() goes to the log-in page
+  };
+}
+
+function tick() {
+  if (document.hidden) return;
+  if (!liveOk) { refresh(); return; }
+  if (!status) return;
+  const step = (Date.now() - advancedAt) / 1000;
+  advancedAt = Date.now();
+  for (const np of [status.now, ...status.channels.map((c) => c.now)]) {
+    if (np && np.mode === "cutin" && np.duration) np.elapsed = Math.min(np.duration, np.elapsed + step);
+  }
+  renderStatus();
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { if (live) live.close(); live = null; liveOk = false; }
+  else { connectLive(); if (!live) refresh(); }
+});
+
 async function refresh() {
   try {
-    status = await api(`/api/status?${chq()}`);
-    renderStatus();
+    gotStatus(await api(`/api/status?${chq()}`));
   } catch (e) {
     $("#np-mode").textContent = "Controller unreachable";
     $("#live-dot").className = "dot";
@@ -1900,8 +1948,8 @@ daysPicker($("#form-program [data-days]"), DAYS.slice(0, 5));
 basePicker($("#form-program [data-base]"));
 resetSpotForm();
 
-loadConfig().then(() => { route(); refresh(); });
+loadConfig().then(() => { route(); connectLive(); if (!live) refresh(); });
 api("/api/me").then((me) => { $("#btn-logout").hidden = !me.login; }).catch(() => {});
 $("#btn-logout").addEventListener("click", () =>
   api("/api/logout", { method: "POST" }).finally(() => location.replace("/login")));
-setInterval(refresh, 3000);
+setInterval(tick, 3000);

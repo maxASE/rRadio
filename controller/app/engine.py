@@ -239,6 +239,11 @@ class Engine:
         self._force_check: set[str] = set()
         self._tasks: list[asyncio.Task] = []
         self.titles = Watchers()
+        # Bumped whenever something /api/status shows changes, so the live feed
+        # (/api/events) only rebuilds and sends the status when there is news.
+        self.version = 0
+        self._signature: str | None = None
+        self._changed = asyncio.Event()
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -611,7 +616,35 @@ class Engine:
                     cs.liq = None
             except Exception:
                 log.exception("tick error")
+            self._note_changes()
             await asyncio.sleep(TICK)
+
+    # --- change tracking for the live feed --------------------------------------
+
+    _VOLATILE = ("cutin_elapsed", "cutin_remaining", "since")  # the UI counts these up itself
+
+    def _note_changes(self) -> None:
+        chans = {}
+        for cid, cs in self.channels.items():
+            liq = {k: v for k, v in (cs.liq or {}).items() if k not in self._VOLATILE}
+            prog = (cs.on_program.program.name, cs.on_program.end) if cs.on_program else None
+            chans[cid] = (liq, prog, cs.listeners, cs.music_error, cs.spots, cs.shows, cs.ended)
+        items = [(i.uid, i.state, i.channel, round((i.progress or 0) * 20)) for i in self.items]
+        sig = json.dumps([id(self.config), self.liq_up, chans, items, self.source_state], sort_keys=True, default=str)
+        if sig != self._signature:
+            self._signature = sig
+            self.version += 1
+            ev, self._changed = self._changed, asyncio.Event()
+            ev.set()
+
+    async def wait_change(self, version: int, timeout: float) -> None:
+        """Return as soon as the version moves past `version`, or after `timeout` seconds."""
+        if self.version != version:
+            return
+        try:
+            await asyncio.wait_for(self._changed.wait(), timeout)
+        except TimeoutError:
+            pass
 
     async def _tick(self) -> None:
         st = await self.liq.status()

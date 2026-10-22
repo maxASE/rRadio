@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import logging
 import mimetypes
 import os
@@ -18,7 +19,7 @@ import segno
 import yaml
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
@@ -64,7 +65,7 @@ app = FastAPI(title="Pirate Radio", lifespan=lifespan, docs_url="/api/docs", red
 
 # What a "member" device may call; everything else needs an admin device or the UI password.
 MEMBER_ROUTES = {
-    "GET": re.compile(r"/api/(status|widget|me|art/.+|images/.+)"),
+    "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+)"),
     "POST": re.compile(r"/api/(skip|program/end|play-url|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire)"),
     "DELETE": re.compile(r"/api/queue/.+"),
 }
@@ -248,6 +249,35 @@ async def status(request: Request, channel: str | None = None):
     dev = restricted()
     if dev:
         channel = channel_or_404(channel).id
+    return build_status(request, channel, dev)
+
+
+@app.get("/api/events", include_in_schema=False)
+async def events(request: Request, channel: str | None = None):
+    """The same data as /api/status as a live feed (Server-Sent Events): sent once
+    at the start and then only when something changes, instead of being polled.
+    A comment line every 20 seconds keeps proxies from closing the connection;
+    after 30 minutes the server ends it and the browser reconnects (and logs in again)."""
+    dev = restricted()
+    if dev:
+        channel = channel_or_404(channel).id
+
+    async def feed():
+        started, seen = time.monotonic(), -1
+        yield "retry: 3000\n\n"
+        while time.monotonic() - started < 1800 and not await request.is_disconnected():
+            if engine.version != seen:
+                seen = engine.version
+                yield f"data: {json.dumps(build_status(request, channel, dev), default=str)}\n\n"
+            else:
+                yield ": ping\n\n"
+            await engine.wait_change(seen, 20)
+
+    return StreamingResponse(feed(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+def build_status(request: Request, channel: str | None, dev: devmod.Device | None) -> dict:
     data = engine.status(channel)
     if dev:
         data["channels"] = [c for c in data["channels"] if dev.may_use(c["id"])]
