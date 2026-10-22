@@ -77,7 +77,7 @@ def test_voice_message_can_be_played_again_for_a_day(admin, app_main):
     assert got.content == audio
 
 
-def test_spots_are_not_kept_but_skipped_clips_are(admin, app_main):
+def test_news_and_skipped_clips_can_be_played_again(admin, app_main):
     from app.sources import Item
 
     spot = Item(kind="spot", source_id="news", source_name="News", item_id="n1", title="News 13:00",
@@ -87,7 +87,7 @@ def test_spots_are_not_kept_but_skipped_clips_are(admin, app_main):
                 media="https://example.com/e.mp3", channel="kid")
     app_main.engine._finish(clip, "skipped")
     history = admin.get("/api/status", params={"channel": "kid"}).json()["history"]
-    assert next(h for h in history if h["title"] == "News 13:00")["replay"] is False
+    assert next(h for h in history if h["title"] == "News 13:00")["replay"] is True
     assert next(h for h in history if h["title"] == "Episode")["replay"] is True
 
 
@@ -121,11 +121,16 @@ def test_history_clip_can_be_queued_again(admin, app_main):
     app_main.engine.items.remove(queued)
 
 
-def test_spots_cannot_be_queued_again(admin, app_main):
+def test_news_can_be_queued_again(admin, app_main):
     from app.sources import Item
 
     spot = Item(kind="spot", source_id="news", source_name="News", item_id="n2", title="Old news",
                 media="https://example.com/n2.mp3", channel="kid")
     app_main.engine._finish(spot, "played")
     entry = next(h for h in admin.get("/api/status", params={"channel": "kid"}).json()["history"] if h["title"] == "Old news")
-    assert admin.post(f"/api/history/{entry['id']}/play-next").status_code == 404
+    app_main.engine.downloads.put_nowait = lambda key: None
+    r = admin.post(f"/api/history/{entry['id']}/play-next")
+    assert r.status_code == 200, r.text
+    queued = next(i for i in app_main.engine.items if i.uid == r.json()["key"])
+    assert queued.media == "https://example.com/n2.mp3"
+    app_main.engine.items.remove(queued)

@@ -610,10 +610,10 @@ class Engine:
         self.store.add_history(it.kind, it.source_name, it.title, status, channel=it.channel, replay=replay)
 
     def _replay_info(self, it: Item) -> dict | None:
-        """How "listen again" finds this clip later. Clips are fetched again from where
-        they came from; only voice messages, which exist nowhere else, are kept for a
-        day. Spots (news, jingles) are left out: the next one is newer anyway."""
-        if it.kind in ("inbox", "spot"):
+        """How "listen again" finds this clip later. Clips and news episodes are fetched
+        again from where they came from; only voice messages, which exist nowhere else,
+        are kept for a day."""
+        if it.kind == "inbox":
             return None
         if it.kind == "voice":
             if not self.config.settings.replay_keep or not it.path or not Path(it.path).is_file():
