@@ -12,6 +12,7 @@ import re
 import secrets
 import time
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
@@ -67,7 +68,7 @@ app = FastAPI(title="rRadio", version=__version__, lifespan=lifespan, docs_url="
 
 # What a "member" device may call; everything else needs an admin device or the UI password.
 MEMBER_ROUTES = {
-    "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio|navidrome/playlists)"),
+    "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio|navidrome/playlists|week)"),
     "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire|history/\d+/play-next)"),
     "DELETE": re.compile(r"/api/(queue/.+|history/\d+/replay)"),
 }
@@ -412,6 +413,17 @@ async def choose_station(body: StationChoice):
     ch.current_station = body.id
     store.save(cfg)
     return {"ok": True, "id": body.id}
+
+
+@app.get("/api/week")
+async def week(channel: str | None = None, day: str | None = None):
+    """The channel's schedule for the week that `day` (YYYY-MM-DD, default today) is in."""
+    ch = channel_or_404(channel)
+    try:
+        d = date.fromisoformat(day) if day else None
+    except ValueError:
+        raise HTTPException(400, "day must be YYYY-MM-DD")
+    return engine.week(ch.id, d)
 
 
 @app.post("/api/program/end")
