@@ -824,7 +824,7 @@ class Engine:
         if not p.keep_day or p.kind != "stream" or not p.url:
             return resume or None
         if resume and resume.get("path") and Path(resume["path"]).is_file():
-            cs.recording = asyncio.create_task(self._record(p, Path(resume["path"])))
+            cs.recording = asyncio.create_task(self._record(p, Path(resume["path"])), name=resume["path"])
             log.info("Keeping program %s on %s: recording goes on in %s", p.name, ch.name, resume["path"])
             return resume
         prune_replays(REPLAY_KEEP)
@@ -833,11 +833,17 @@ class Engine:
         ext = next((e for e in ("aac", "m4a", "ogg", "opus") if p.url.lower().split("?")[0].endswith("." + e)), "mp3")
         path = folder / f"program-{ch.id}-{int(time.time())}.{ext}"
         path.touch()
-        cs.recording = asyncio.create_task(self._record(p, path))
+        cs.recording = asyncio.create_task(self._record(p, path), name=str(path))
         log.info("Keeping program %s on %s for 24 h in %s", p.name, ch.name, path)
         art = self.base_art(p, cs, "", "")
         return {"path": str(path), "until": time.time() + REPLAY_KEEP, **({"art": art} if art else {}),
                 **({"from": time.time()} if resume is not None else {})}
+
+    def drop_recording(self, path: str) -> None:
+        """Stops recording into `path` (a kept program removed while still on air)."""
+        for cs in self.channels.values():
+            if cs.recording and cs.recording.get_name() == path:
+                self._stop_recording(cs)
 
     def _stop_recording(self, cs: ChannelState) -> None:
         if cs.recording:

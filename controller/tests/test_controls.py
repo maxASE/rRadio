@@ -1,6 +1,7 @@
 """Live feed, voice messages and the everyday controls."""
 
 import json
+from pathlib import Path
 
 
 def test_status_shape(admin):
@@ -176,6 +177,11 @@ def test_a_kept_program_is_recorded_and_listened_back(admin, app_main, ram_dir):
     assert r.status_code == 206 and len(r.content) == 1000
     # A three-hour show is for listening back, not for putting on the radio again.
     assert admin.post(f"/api/history/{entry['id']}/play-next").status_code == 409
+    # Removed from memory before its 24 hours are up.
+    assert admin.delete(f"/api/history/{entry['id']}/replay").status_code == 200
+    assert not Path(replay["path"]).exists()
+    assert admin.get(f"/api/history/{entry['id']}/audio").status_code == 404
+    assert admin.delete(f"/api/history/{entry['id']}/replay").status_code == 404
 
 
 def test_a_restart_carries_on_with_the_program(app_main, ram_dir):
