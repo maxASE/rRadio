@@ -218,6 +218,7 @@ class ChannelState:
     id: str
     liq: dict | None = None
     on_program: DueProgram | None = None
+    looked_for_open: bool = False  # after a restart: closed a program left "started"?
     tie_breaks: dict = field(default_factory=dict)
     skipped: set = field(default_factory=set)
     listeners: int | None = None
@@ -242,6 +243,7 @@ class Engine:
     def __init__(self, cfg: ConfigStore, store: Store, liq: Liquidsoap):
         self.cfg = cfg
         self.store = store
+        self.booted = time.time()
         self.liq = liq
         self.items: list[Item] = []  # cut-ins of every channel
         self.downloads: asyncio.Queue[str] = asyncio.Queue()  # item keys
@@ -790,6 +792,16 @@ class Engine:
             nxt.state = "queued"
             on_air_clips.append(nxt)
 
+        # A minute after start (stream titles have been read by then): a program that was
+        # on when the server stopped and isn't any more ended, or the apps would show it
+        # as still on air.
+        if not cs.looked_for_open and (cs.on_program or (not due and time.time() - self.booted > 60)):
+            cs.looked_for_open = True
+            open_ = None if cs.on_program else self.store.last_program(ch.id)
+            if open_ and open_["status"] == "started":
+                self.store.add_history("program", open_["title"], open_["title"], "ended", "over while rRadio restarted",
+                                       channel=ch.id)
+
         if due and cs.on_program is None and not on_air_clips:
             window = program_window(due.program, now)
             since = window[0].timestamp() if window else time.time() - 12 * 3600
@@ -897,11 +909,22 @@ class Engine:
             if p.trigger != "title" or not p.enabled:
                 continue
             ids.add(p.id)
-            show = cs.shows.setdefault(p.id, {"on": None, "ok": 0.0, "why": ""})
-            if not program_window(p, now):
+            window = program_window(p, now)
+            if p.id not in cs.shows:
+                cs.shows[p.id] = {"on": None, "ok": 0.0, "why": ""}
+                # After a restart: a show that already ended in this window stays over.
+                ended = self.store.ended_since(ch.id, p.name, window[0].timestamp()) if window else None
+                if ended:
+                    cs.shows[p.id].update(ended_at=ended, why="ended earlier in this window")
+            show = cs.shows[p.id]
+            if not window:
                 if show["on"] is not None:
                     show["on"], show["why"] = None, "window over"
                 show.pop("ended_at", None)
+                continue
+            if show.get("ended_at") and show["on"] is None:
+                # Once over, it stays over until the window closes: some stations keep
+                # sending the show's title for hours afterwards (Hafenradio does).
                 continue
             w = self.titles.get(p.watch_url)
             title = w.title if w else None

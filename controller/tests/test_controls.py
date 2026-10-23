@@ -234,3 +234,36 @@ def test_programs_are_not_kept_unless_asked(app_main):
     engine = app_main.engine
     ch = engine.config.channels[0]
     assert engine._start_recording(ch, engine.state(ch.id), Program(name="P", url="http://radio.example/live")) is None
+
+
+def test_a_title_show_that_ended_stays_over_after_a_restart(app_main):
+    """Hafenradio keeps sending the show's title for hours after it ends; a restart in the
+    window must not start the show again from that title."""
+    from types import SimpleNamespace
+
+    from app.config import Program
+
+    engine = app_main.engine
+    ch = engine.config.channels[0]
+    cs = engine.state(ch.id)
+    show = Program(name="Live am Morgen", url="http://radio.example/live", trigger="title",
+                   title_start="Jetzt: Hafenradio Live", start="00:00", end="23:59")
+    ch.programs.append(show)
+    engine.titles.by_url[show.watch_url] = SimpleNamespace(title="Jetzt: Hafenradio Live - Der Tag beginnt mit Hafenradio")
+    try:
+        now = engine.now()
+        engine.store.add_history("program", show.name, show.name, "started", channel=ch.id)
+        engine.store.add_history("program", show.name, show.name, "ended", "title: Musik", channel=ch.id)
+        cs.shows.pop(show.id, None)  # as after a restart
+        engine._shows_tick(ch, cs, now)
+        assert cs.shows[show.id]["on"] is None and cs.shows[show.id]["ended_at"]
+        # Without an earlier end in the window, the same title starts it.
+        engine.store.ended_since = lambda *a: None
+        cs.shows.pop(show.id)
+        engine._shows_tick(ch, cs, now)
+        assert cs.shows[show.id]["on"] is not None
+    finally:
+        del engine.store.ended_since
+        del engine.titles.by_url[show.watch_url]
+        ch.programs.remove(show)
+        cs.shows.pop(show.id, None)

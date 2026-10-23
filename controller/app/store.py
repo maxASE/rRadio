@@ -156,6 +156,25 @@ class Store:
             replay = {}
         return row[0], row[1], replay
 
+    def last_program(self, channel: str) -> dict | None:
+        """The newest program entry ("started" or "ended") of a channel."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT title, status FROM history WHERE kind = 'program' AND channel = ? ORDER BY id DESC LIMIT 1",
+                (channel,),
+            ).fetchone()
+        return {"title": row[0], "status": row[1]} if row else None
+
+    def ended_since(self, channel: str, name: str, since: float) -> float | None:
+        """When program `name` last ended on the channel, if that was after `since`."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT MAX(ts) FROM history WHERE kind = 'program' AND status = 'ended' AND channel = ? AND title = ?"
+                " AND ts >= ?",
+                (channel, name, since),
+            ).fetchone()
+        return row[0] if row and row[0] else None
+
     def set_replay(self, entry_id: int, replay: dict | None) -> None:
         with self._lock, self._db:
             self._db.execute("UPDATE history SET replay = ? WHERE id = ?",
