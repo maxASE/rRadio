@@ -69,7 +69,7 @@ app = FastAPI(title="rRadio", version=__version__, lifespan=lifespan, docs_url="
 # What a "member" device may call; everything else needs an admin device or the UI password.
 MEMBER_ROUTES = {
     "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio|navidrome/playlists|week)"),
-    "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire|history/\d+/play-next)"),
+    "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire|history/\d+/play-next|quiet)"),
     "DELETE": re.compile(r"/api/(queue/.+|history/\d+/replay)"),
 }
 
@@ -413,6 +413,19 @@ async def choose_station(body: StationChoice):
     ch.current_station = body.id
     store.save(cfg)
     return {"ok": True, "id": body.id}
+
+
+class QuietBody(BaseModel):
+    """Wind down: hold news, spots and new clips until `until` (epoch seconds; null ends it)."""
+
+    channel: str | None = None
+    until: float | None = None
+
+
+@app.post("/api/quiet")
+async def quiet(body: QuietBody):
+    ch = channel_or_404(body.channel)
+    return {"ok": True, "quiet_until": engine.set_quiet(ch.id, body.until)}
 
 
 @app.get("/api/week")

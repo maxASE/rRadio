@@ -364,6 +364,13 @@ per day the programs (`start`/`end` in minutes since midnight, `trigger`,
 `keep_day`, and `ran` with the real times and history entry once it ran) and
 the timed spots (`minute`). Spots that follow songs are listed apart.
 
+**Wind down.** `POST /api/quiet` with `{"channel": "<id>", "until": <epoch seconds>}`
+keeps a channel calm until then: timed news and spots are skipped (not saved
+up) and new video clips, podcasts, voice messages and inbox files wait in the
+queue. Programs and things played by hand still play. `"until": null` ends it
+early; `/api/status` shows `quiet_until`. The apps use this for the evening
+sleep timer and end it when the alarm goes off.
+
 **Listen again.** The apps can play a clip from the history again, on the phone
 only, with `GET /api/history/<id>/audio` (the `id` and `replay` fields of the
 `history` entries in `/api/status`), or put it back on the radio with
