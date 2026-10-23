@@ -15,6 +15,14 @@ from .sessions import Sessions
 DB_PATH = Path(os.environ.get("STATE_DB", "/data/state.db"))
 
 
+def replay_art(raw: str) -> str:
+    """The picture that was shown while the entry played, if it was noted."""
+    try:
+        return (json.loads(raw) if raw else {}).get("art") or ""
+    except ValueError:
+        return ""
+
+
 def replay_available(raw: str) -> bool:
     """A kept file must still be there; a source to fetch again always is."""
     if not raw:
@@ -107,7 +115,7 @@ class Store:
                 (channel, channel, limit),
             ).fetchall()
         keys = ["id", "ts", "kind", "source", "title", "status", "detail"]
-        return [{**dict(zip(keys, r)), "replay": replay_available(r[7])} for r in rows]
+        return [{**dict(zip(keys, r)), "replay": replay_available(r[7]), "art": replay_art(r[7])} for r in rows]
 
     def entry(self, entry_id: int) -> dict | None:
         """One history entry with its replay info (None if it can't be played again)."""

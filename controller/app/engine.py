@@ -622,15 +622,16 @@ class Engine:
         are kept for a day."""
         if it.kind == "inbox":
             return None
+        art = {"art": it.art} if it.art else {}  # so the apps can show its picture again
         if it.kind == "voice":
             if not self.config.settings.replay_keep or not it.path or not Path(it.path).is_file():
                 return None
             prune_replays(REPLAY_KEEP)
             kept = keep_for_replay(Path(it.path), self.config.settings.cache_in_ram)
-            return {"path": str(kept), "until": time.time() + REPLAY_KEEP}
+            return {"path": str(kept), "until": time.time() + REPLAY_KEEP, **art}
         if it.keep_file and it.path:  # own media stays on disk anyway
-            return {"path": it.path}
-        return {"media": it.media} if it.media else None
+            return {"path": it.path, **art}
+        return {"media": it.media, **art} if it.media else None
 
     def _item_wins(self, cs: ChannelState, it: Item, due: DueProgram) -> bool:
         start = due.start.timestamp()
@@ -815,7 +816,8 @@ class Engine:
         path.touch()
         cs.recording = asyncio.create_task(self._record(p, path))
         log.info("Keeping program %s on %s for 24 h in %s", p.name, ch.name, path)
-        return {"path": str(path), "until": time.time() + REPLAY_KEEP}
+        art = self.base_art(p, cs, "", "")
+        return {"path": str(path), "until": time.time() + REPLAY_KEEP, **({"art": art} if art else {})}
 
     def _stop_recording(self, cs: ChannelState) -> None:
         if cs.recording:
@@ -1157,7 +1159,7 @@ class Engine:
             "programs": self.program_status(ch),
             "windows": self.open_windows(ch),
             "listeners": cs.listeners,
-            "history": self.store.history(25, ch.id),
+            "history": [{**h, "art": self.art.path(h["art"])} for h in self.store.history(25, ch.id)],
             "time": self.now().isoformat(),
         }
 

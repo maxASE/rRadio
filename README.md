@@ -351,8 +351,10 @@ except programs marked **Keep it for 24 hours** (Schedule › program): those ar
 recorded from their stream while they run, into the RAM disk when downloads go
 there (about 60 MB per hour of MP3, so raise `RAM_CACHE_SIZE` to `1g` or more
 for long shows), and the apps can listen back from the program's "started"
-entry, even while it is still on air. Recording stops early if the RAM disk is
-nearly full.
+entry, even while it is still on air (the recording answers byte ranges, so the
+apps can drag back along the show and return to live). Recording stops early if
+the RAM disk is nearly full. History entries carry the picture that was shown
+while they played (`art`), so the apps can show it again when listening back.
 
 ## Apps and device keys
 
