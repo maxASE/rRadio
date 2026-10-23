@@ -69,3 +69,20 @@ def test_member_picks_a_navidrome_playlist_as_station(admin, anon, app_main, mon
     again = anon.post("/api/station", headers=auth, json={"channel": "kid", "playlist": "Morning"}).json()
     assert again["id"] == picked["id"]
     assert anon.post("/api/station", headers=auth, json={"channel": "kid", "playlist": "Nope"}).status_code == 404
+
+
+def test_member_quiets_its_channel_until_morning(admin, anon, app_main):
+    import time
+
+    d = pair(admin, anon, role="member", channels=["kid"])
+    auth = {"Authorization": f"Bearer {d['token']}"}
+    until = time.time() + 3600
+    r = anon.post("/api/quiet", headers=auth, json={"channel": "kid", "until": until})
+    assert r.status_code == 200 and r.json()["quiet_until"] == until
+    assert anon.get("/api/status?channel=kid", headers=auth).json()["quiet_until"] == until
+    cs = app_main.engine.state("kid")
+    assert cs.quiet_until == until
+    # A time in the past, or null, ends it.
+    assert anon.post("/api/quiet", headers=auth, json={"channel": "kid", "until": None}).json()["quiet_until"] is None
+    assert anon.get("/api/status?channel=kid", headers=auth).json()["quiet_until"] is None
+    assert anon.post("/api/quiet", headers=auth, json={"channel": "kid", "until": 5}).json()["quiet_until"] is None

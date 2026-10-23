@@ -213,6 +213,10 @@ class Track:
     art: str = ""
 
 
+# What waits while a channel is quiet (wind down); things picked by hand still play.
+QUIET_HOLDS = ("video", "podcast", "voice", "inbox")
+
+
 @dataclass
 class ChannelState:
     id: str
@@ -237,6 +241,7 @@ class ChannelState:
     last_clip: tuple | None = None  # (title, artist) of the last clip pushed, to spot its metadata lingering
     ended: dict = field(default_factory=dict)  # program id -> {"until": window end, "at": when} for programs ended by hand
     recording: asyncio.Task | None = None  # the program on air being kept for 24 h
+    quiet_until: float = 0.0  # wind down in the apps: no news or new clips until then
 
 
 class Engine:
@@ -462,6 +467,8 @@ class Engine:
                 raise
 
     def _spots_tick(self, ch: Channel, cs: ChannelState, song_changed: bool) -> None:
+        if cs.quiet_until > time.time():
+            return  # winding down: timed spots are skipped, not saved up
         now = self.now()
         slot = now.strftime("%Y-%m-%d %H:%M")
         for spot in ch.spots:
@@ -772,6 +779,8 @@ class Engine:
             return not it.during_programs and not p.cutins_interrupt
 
         def eligible(it: Item) -> bool:
+            if cs.quiet_until > time.time() and it.kind in QUIET_HOLDS:
+                return False  # waits for the morning
             if cs.on_program and holds(cs.on_program.program, it):
                 return False
             if not cs.on_program and due and holds(due.program, it) and not self._item_wins(cs, it, due):
@@ -1205,6 +1214,13 @@ class Engine:
         return {"channel": ch.id if ch else None, "station": station.name if station else "",
                 "today": now.date().isoformat(), "now": now.hour * 60 + now.minute, "days": days}
 
+    def set_quiet(self, cid: str, until: float | None) -> float | None:
+        """Hold news, spots and new clips on a channel until `until` (None ends it)."""
+        cs = self.state(cid)
+        cs.quiet_until = until if until and until > time.time() else 0.0
+        self._note_changes()
+        return cs.quiet_until or None
+
     def config_images(self) -> dict:
         """Where the UI can preview each picture set in the config, by its URL."""
         urls = {s.image for c in self.config.channels for s in [*c.stations, *c.programs, *c.spots] if s.image}
@@ -1226,6 +1242,7 @@ class Engine:
             ss = cs.spots.get(s.id, {})
             nxt = next_spot(s, now)
             out[s.id] = {
+                "name": s.name,
                 "next": nxt.isoformat() if nxt else None,
                 "last": ss.get("last"),
                 # An error from before the spot was edited no longer applies.
@@ -1274,6 +1291,7 @@ class Engine:
             "programs": self.program_status(ch),
             "windows": self.open_windows(ch),
             "listeners": cs.listeners,
+            "quiet_until": cs.quiet_until if cs.quiet_until > time.time() else None,
             "history": [{**h, "art": self.art.path(h["art"])} for h in self.store.history(25, ch.id)],
             "time": self.now().isoformat(),
         }
