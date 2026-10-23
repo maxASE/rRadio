@@ -116,7 +116,8 @@ class Store:
             ).fetchall()
         keys = ["id", "ts", "kind", "source", "title", "status", "detail"]
         return [{**dict(zip(keys, r)), "replay": replay_available(r[7]),
-                 "art": replay_field(r[7], "art") or "", "replay_from": replay_field(r[7], "from")} for r in rows]
+                 "art": replay_field(r[7], "art") or "", "replay_from": replay_field(r[7], "from"),
+                 "duration": replay_field(r[7], "duration")} for r in rows]
 
     def entry(self, entry_id: int) -> dict | None:
         """One history entry with its replay info (None if it can't be played again)."""

@@ -623,6 +623,8 @@ class Engine:
         if it.kind == "inbox":
             return None
         art = {"art": it.art} if it.art else {}  # so the apps can show its picture again
+        if it.duration:  # players misjudge the length of some streams (the site's AAC: twice as long)
+            art["duration"] = it.duration
         if it.kind == "voice":
             if not self.config.settings.replay_keep or not it.path or not Path(it.path).is_file():
                 return None

@@ -111,9 +111,10 @@ def test_history_clip_can_be_queued_again(admin, app_main):
     from app.sources import Item
 
     clip = Item(kind="video", source_id="vid", source_name="Riks", item_id="v1", title="Again please",
-                media="dQw4w9WgXcQ", channel="kid")
+                media="dQw4w9WgXcQ", channel="kid", duration=702)
     app_main.engine._finish(clip, "played")
     entry = next(h for h in admin.get("/api/status", params={"channel": "kid"}).json()["history"] if h["title"] == "Again please")
+    assert entry["duration"] == 702  # the app trusts this over the player's guess
     app_main.engine.downloads.put_nowait = lambda key: None  # no Invidious in tests
     r = admin.post(f"/api/history/{entry['id']}/play-next")
     assert r.status_code == 200, r.text
