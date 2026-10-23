@@ -28,7 +28,7 @@ from . import API_VERSION, __version__
 from . import devices as devmod
 from . import media, transfer
 from .art import find_station_logo, image_file, save_image
-from .config import SECRET_MASK, Config, ConfigStore, Podcast, dump
+from .config import SECRET_MASK, Config, ConfigStore, Podcast, Station, dump
 from .engine import Engine, short_error
 from .liq import Liquidsoap
 from .navidrome import Navidrome
@@ -67,7 +67,7 @@ app = FastAPI(title="rRadio", version=__version__, lifespan=lifespan, docs_url="
 
 # What a "member" device may call; everything else needs an admin device or the UI password.
 MEMBER_ROUTES = {
-    "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio)"),
+    "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio|navidrome/playlists)"),
     "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire|history/\d+/play-next)"),
     "DELETE": re.compile(r"/api/(queue/.+|history/\d+/replay)"),
 }
@@ -372,7 +372,11 @@ async def import_file(file: UploadFile = File(...), name: str = Form(""), replac
 
 
 class StationChoice(BaseModel):
-    id: str
+    """A station of the channel by `id`, or a Navidrome `playlist` by name
+    ("" = random songs from the whole library)."""
+
+    id: str = ""
+    playlist: str | None = None
     channel: str | None = None
 
 
@@ -381,11 +385,33 @@ async def choose_station(body: StationChoice):
     channel_or_404(body.channel)
     cfg = store.config.model_copy(deep=True)
     ch = cfg.channel(body.channel)
-    if ch is None or body.id not in {s.id for s in ch.stations}:
+    if ch is None:
+        raise HTTPException(404, "unknown channel")
+    if body.playlist is not None:
+        # A playlist the channel already has as a station is reused; any
+        # other becomes a new Navidrome station on this channel.
+        name = body.playlist.strip()
+        same = next((s for s in ch.stations if s.kind == "navidrome" and s.playlist.lower() == name.lower()), None)
+        if same is None:
+            if name:
+                try:
+                    lists = await _navidrome().playlists()
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    raise HTTPException(502, str(e))
+                match = next((p for p in lists if p["id"] == name or p["name"].lower() == name.lower()), None)
+                if match is None:
+                    raise HTTPException(404, f"no Navidrome playlist called {name!r}")
+                name = match["name"]
+            same = Station(name=name or "Navidrome library", kind="navidrome", playlist=name)
+            ch.stations.append(same)
+        body.id = same.id
+    if body.id not in {s.id for s in ch.stations}:
         raise HTTPException(404, "unknown station")
     ch.current_station = body.id
     store.save(cfg)
-    return {"ok": True}
+    return {"ok": True, "id": body.id}
 
 
 @app.post("/api/program/end")

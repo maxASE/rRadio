@@ -339,6 +339,13 @@ HTTP, use the file field instead: phones offer their voice recorder there.
 Apps send the same thing with `POST /api/voice` (form fields `file`,
 `channel` = a channel id or `all`, optional `title`).
 
+**What plays underneath.** `/api/status` lists the channel's `stations` (id,
+name, kind, playlist, art) and the `current_station`. Apps switch with
+`POST /api/station` and `{"id": …}`, or pick a Navidrome playlist with
+`{"playlist": "<name>"}` (`""` = random songs from the library; the names come
+from `GET /api/navidrome/playlists`). A playlist the channel doesn't have yet
+is added to it as a Navidrome station.
+
 **Listen again.** The apps can play a clip from the history again, on the phone
 only, with `GET /api/history/<id>/audio` (the `id` and `replay` fields of the
 `history` entries in `/api/status`), or put it back on the radio with

@@ -47,3 +47,25 @@ def test_promote_and_revoke(admin, anon, role):
 
 def test_unknown_key(anon):
     assert anon.get("/api/status", headers={"Authorization": "Bearer rr_nope"}).status_code == 401
+
+
+def test_member_picks_a_navidrome_playlist_as_station(admin, anon, app_main, monkeypatch):
+    async def playlists(self):
+        return [{"id": "p1", "name": "Morning", "songs": 12}]
+
+    monkeypatch.setattr(app_main.Navidrome, "playlists", playlists)
+    cfg = admin.get("/api/config").json()
+    cfg["settings"].update(navidrome_url="http://nd.example", navidrome_user="max")
+    assert admin.put("/api/config", json=cfg).status_code == 200
+    d = pair(admin, anon, role="member", channels=["kid"])
+    auth = {"Authorization": f"Bearer {d['token']}"}
+    assert anon.get("/api/navidrome/playlists", headers=auth).json()[0]["name"] == "Morning"
+    r = anon.post("/api/station", headers=auth, json={"channel": "kid", "playlist": "morning"})
+    assert r.status_code == 200, r.text
+    st = anon.get("/api/status?channel=kid", headers=auth).json()
+    picked = next(s for s in st["stations"] if s["id"] == st["current_station"])
+    assert picked["kind"] == "navidrome" and picked["playlist"] == "Morning"
+    # The same playlist again reuses that station.
+    again = anon.post("/api/station", headers=auth, json={"channel": "kid", "playlist": "Morning"}).json()
+    assert again["id"] == picked["id"]
+    assert anon.post("/api/station", headers=auth, json={"channel": "kid", "playlist": "Nope"}).status_code == 404
