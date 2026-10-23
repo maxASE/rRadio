@@ -10,9 +10,11 @@ permissions:
   contents: read
   packages: write
 
+# Runs on Max's own home server (a self-hosted runner labelled "Linux"), so it
+# uses no GitHub Actions minutes on this private repository.
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux]
     steps:
       - uses: actions/checkout@v4
       - name: Check the Liquidsoap script
@@ -35,7 +37,7 @@ jobs:
   image:
     needs: check
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux]
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
