@@ -1201,6 +1201,12 @@ class Engine:
             "now": self.now_playing(ch),
             "engine_up": self.liq_up and cs.liq is not None,
             "station": station.model_dump() if station else None,
+            # The channel's stations, for a picker in the app.
+            "stations": [
+                {"id": s.id, "name": s.name, "kind": s.kind, "playlist": s.playlist, "art": self.art.path(s.image)}
+                for s in ch.stations
+            ],
+            "current_station": ch.current_station,
             "next_program": next_program(ch, self.now()),
             "queue": [i.public() for i in sorted(self.items, key=lambda i: (-i.priority, i.arrived)) if i.channel == ch.id],
             "sources": self.source_state,
