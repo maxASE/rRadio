@@ -346,6 +346,12 @@ name, kind, playlist, art) and the `current_station`. Apps switch with
 from `GET /api/navidrome/playlists`). A playlist the channel doesn't have yet
 is added to it as a Navidrome station.
 
+**The week.** `GET /api/week?channel=<id>&day=YYYY-MM-DD` gives the
+schedule of that week (Monday to Sunday, default this week) for the apps:
+per day the programs (`start`/`end` in minutes since midnight, `trigger`,
+`keep_day`, and `ran` with the real times and history entry once it ran) and
+the timed spots (`minute`). Spots that follow songs are listed apart.
+
 **Listen again.** The apps can play a clip from the history again, on the phone
 only, with `GET /api/history/<id>/audio` (the `id` and `replay` fields of the
 `history` entries in `/api/status`), or put it back on the radio with

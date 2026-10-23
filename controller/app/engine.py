@@ -20,7 +20,7 @@ import re
 import shutil
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -1146,6 +1146,64 @@ class Engine:
                               "new": not self.store.is_seen(f"spot:{spot.id}", ep.item_id)}
             out["art"] = self.art.path(spot.image or ep.art)
         return out
+
+    def week(self, cid: str | None, day: date | None = None) -> dict:
+        """The schedule of the week (Monday to Sunday) that `day` is in, for the
+        apps: programs and timed spots per day, in minutes since midnight. On
+        days that have begun, programs that ran carry their real times (`ran`)."""
+        ch = self.config.channel(cid) or self.config.channel(None)
+        now = self.now()
+        day = day or now.date()
+        monday = day - timedelta(days=day.weekday())
+        tz = now.tzinfo
+        start = datetime.combine(monday, datetime.min.time(), tz)
+        ran = self.store.programs_between(ch.id, start.timestamp(), (start + timedelta(days=7)).timestamp()) if ch else []
+        days = []
+        for i in range(7):
+            d = monday + timedelta(days=i)
+            midnight = datetime.combine(d, datetime.min.time(), tz)
+            programs, spots, every_songs = [], [], []
+            for p in ch.programs if ch else []:
+                if not p.enabled:
+                    continue
+                a, b = _minutes(p.start), _minutes(p.end)
+                spans = []
+                if DAYS[i] in p.days:
+                    spans.append((a, b if b > a else 1440))
+                if 0 < b <= a and DAYS[(i + 6) % 7] in p.days:
+                    spans.append((0, b))  # yesterday's, past midnight
+                for a2, b2 in spans:
+                    entry = {"name": p.name, "start": a2, "end": b2, "trigger": p.trigger,
+                             "keep_day": p.keep_day, "art": self.art.path(p.image)}
+                    # What really happened in that window, from the history.
+                    w0, w1 = midnight + timedelta(minutes=a2), midnight + timedelta(minutes=b2)
+                    started = next((h for h in ran if h["title"] == p.name and h["status"] == "started"
+                                    and w0.timestamp() - 60 <= h["ts"] < w1.timestamp()), None)
+                    if started:
+                        ended = next((h for h in ran if h["title"] == p.name and h["status"] == "ended"
+                                      and h["id"] > started["id"]), None)
+                        to_min = lambda ts: round((ts - midnight.timestamp()) / 60)
+                        entry["ran"] = {"from": max(to_min(started["ts"]), a2),
+                                        "to": min(to_min(ended["ts"]), b2) if ended else None,
+                                        "history_id": started["id"], "replay": started["replay"]}
+                    programs.append(entry)
+            for sp in ch.spots if ch else []:
+                if not sp.enabled or DAYS[i] not in sp.days:
+                    continue
+                if sp.trigger == "songs":
+                    every_songs.append({"name": sp.name, "every_songs": sp.every_songs})
+                    continue
+                for m in range(1440):
+                    t = midnight + timedelta(minutes=m)
+                    if spot_due_minute(sp, t):
+                        spots.append({"name": sp.name, "minute": m})
+            programs.sort(key=lambda e: e["start"])
+            spots.sort(key=lambda e: e["minute"])
+            days.append({"date": d.isoformat(), "day": DAYS[i], "programs": programs,
+                         "spots": spots, "song_spots": every_songs})
+        station = ch.station() if ch else None
+        return {"channel": ch.id if ch else None, "station": station.name if station else "",
+                "today": now.date().isoformat(), "now": now.hour * 60 + now.minute, "days": days}
 
     def config_images(self) -> dict:
         """Where the UI can preview each picture set in the config, by its URL."""

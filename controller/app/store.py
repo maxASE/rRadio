@@ -119,6 +119,16 @@ class Store:
                  "art": replay_field(r[7], "art") or "", "replay_from": replay_field(r[7], "from"),
                  "duration": replay_field(r[7], "duration")} for r in rows]
 
+    def programs_between(self, channel: str, start: float, end: float) -> list[dict]:
+        """A channel's program starts and ends between two times, oldest first."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT id, ts, title, status, replay FROM history"
+                " WHERE kind = 'program' AND channel = ? AND ts >= ? AND ts < ? ORDER BY id",
+                (channel, start, end),
+            ).fetchall()
+        return [{"id": r[0], "ts": r[1], "title": r[2], "status": r[3], "replay": replay_available(r[4])} for r in rows]
+
     def entry(self, entry_id: int) -> dict | None:
         """One history entry with its replay info (None if it can't be played again)."""
         with self._lock:

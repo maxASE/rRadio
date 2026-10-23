@@ -267,3 +267,33 @@ def test_a_title_show_that_ended_stays_over_after_a_restart(app_main):
         del engine.titles.by_url[show.watch_url]
         ch.programs.remove(show)
         cs.shows.pop(show.id, None)
+
+
+def test_week_lists_programs_and_spots(admin, app_main):
+    cfg = admin.get("/api/config").json()
+    ch = cfg["channels"][0]
+    ch["programs"] = [{"name": "Late show", "url": "https://radio.example/late", "start": "22:00", "end": "02:00",
+                       "days": ["mon"]}]
+    ch["spots"] = [{"name": "News", "content": "feed", "feed_url": "https://news.example/feed", "trigger": "every",
+                    "every_minutes": 60, "active_from": "08:00", "active_to": "10:00", "days": ["mon"]}]
+    assert admin.put("/api/config", json=cfg).status_code == 200
+    w = admin.get(f"/api/week?channel={ch['id']}&day=2026-10-21").json()
+    assert [d["date"] for d in w["days"]][0] == "2026-10-19" and len(w["days"]) == 7
+    mon, tue = w["days"][0], w["days"][1]
+    assert [(p["start"], p["end"]) for p in mon["programs"]] == [(22 * 60, 1440)]
+    assert [(p["start"], p["end"]) for p in tue["programs"]] == [(0, 120)]  # past midnight
+    assert [s["minute"] for s in mon["spots"]] == [8 * 60, 9 * 60]
+    assert tue["spots"] == []
+    assert admin.get("/api/week?day=nope").status_code == 400
+    # A show that really ran carries its own times.
+    from datetime import datetime
+    tz = app_main.store.config.settings.tz
+    t0 = datetime(2026, 10, 19, 22, 5, tzinfo=tz).timestamp()
+    st = app_main.engine.store
+    with st._lock, st._db:
+        st._db.execute("INSERT INTO history (ts, kind, source, title, status, detail, channel, replay)"
+                       " VALUES (?, 'program', 'Late show', 'Late show', 'started', '', ?, '')", (t0, ch["id"]))
+        st._db.execute("INSERT INTO history (ts, kind, source, title, status, detail, channel, replay)"
+                       " VALUES (?, 'program', 'Late show', 'Late show', 'ended', '', ?, '')", (t0 + 3000, ch["id"]))
+    mon = admin.get(f"/api/week?channel={ch['id']}&day=2026-10-21").json()["days"][0]
+    assert mon["programs"][0]["ran"]["from"] == 22 * 60 + 5 and mon["programs"][0]["ran"]["to"] == 22 * 60 + 55
