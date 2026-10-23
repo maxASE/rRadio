@@ -1108,11 +1108,19 @@ function renderPrograms() {
           daysPicker(days, p.days);
           days.addEventListener("change", () => { p.days = pickedDays(days); saveConfig(); });
           const time = (k) => el("input", { type: "time", value: p[k], "aria-label": k === "start" ? "Starts" : "Ends", onchange: (e) => { p[k] = e.target.value; saveConfig(); } });
+          // Shown on the web page and in the apps while the program is on (streams send no pictures).
+          const pic = imageField(p.image, {
+            placeholder: "Picture URL (shown while it plays)",
+            find: p.kind === "stream" ? () => findLogo(p.url, p.name) : null,
+          });
+          const savePic = el("button", { class: "small-btn primary", type: "button", onclick: () => { p.image = pic.input.value.trim(); saveConfig("Picture saved"); } }, "Save picture");
           return el("li", { "data-program": p.id, class: "editing" },
             head,
             el("div", { class: "small muted title" }, baseLabel(p)),
             el("div", { class: "row gap" }, el("label", { class: "inline" }, "From", time("start")), el("label", { class: "inline" }, "to", time("end"))),
             days,
+            pic.box,
+            el("div", { class: "row gap" }, savePic),
             el("label", { class: "check small" },
               el("input", { type: "checkbox", checked: !!p.cutins_interrupt, onchange: (e) => { p.cutins_interrupt = e.target.checked; saveConfig(); } }),
               "Let new video uploads and podcast episodes interrupt this program (otherwise they wait until it ends)"),
@@ -1203,12 +1211,15 @@ function renderProgramMeta() {
   }
 }
 
-$("#form-program").addEventListener("submit", (ev) => {
+$("#form-program").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const f = ev.target;
   const days = pickedDays($("[data-days]", f));
   if (!days.length) return toast("Pick at least one day", true);
-  channel().programs.push({ name: f.name.value, ...baseValue(f), start: f.start.value, end: f.end.value, days, enabled: true });
+  const base = baseValue(f);
+  // Like a station: look for the stream's logo, so the program has a picture from the start.
+  const image = base.kind === "stream" && base.url ? await findLogo(base.url, f.name.value).then((x) => x.image, () => "") : "";
+  channel().programs.push({ name: f.name.value, ...base, ...(image ? { image } : {}), start: f.start.value, end: f.end.value, days, enabled: true });
   f.name.value = ""; f.url.value = "";
   f.classList.add("hidden");
   saveConfig("Program added");
