@@ -143,7 +143,8 @@ def test_a_kept_program_is_recorded_and_listened_back(admin, app_main, ram_dir):
     engine = app_main.engine
     ch = engine.config.channels[0]
     cs = engine.state(ch.id)
-    show = Program(name="Live am Morgen", url="http://radio.example/live", keep_day=True)
+    show = Program(name="Live am Morgen", url="http://radio.example/live", keep_day=True,
+                   image="http://radio.example/logo.png")
 
     async def fake_record(p, path):  # no network in tests: write a little "audio"
         path.write_bytes(b"ID3" + b"\0" * 2000)
@@ -167,8 +168,12 @@ def test_a_kept_program_is_recorded_and_listened_back(admin, app_main, ram_dir):
     engine.store.add_history("program", show.name, show.name, "started", channel=ch.id, replay=replay)
     entry = next(h for h in admin.get("/api/status", params={"channel": ch.id}).json()["history"]
                  if h["title"] == show.name and h["replay"])
+    assert entry["art"].startswith("/api/art/")  # the app shows the show's picture while listening back
     r = admin.get(f"/api/history/{entry['id']}/audio")
     assert r.status_code == 200 and r.content.startswith(b"ID3")
+    # The app jumps around in the recording (the live timeline), so it must answer ranges.
+    r = admin.get(f"/api/history/{entry['id']}/audio", headers={"Range": "bytes=1000-1999"})
+    assert r.status_code == 206 and len(r.content) == 1000
     # A three-hour show is for listening back, not for putting on the radio again.
     assert admin.post(f"/api/history/{entry['id']}/play-next").status_code == 409
 
