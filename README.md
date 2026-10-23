@@ -293,6 +293,18 @@ plain HTTP unless a server is explicitly allowed. Pick one of these:
   *SSL* tab, request a Let's Encrypt certificate (a DNS challenge works for
   hosts that aren't reachable from the internet) and tick *Force SSL*. Then set
   `PUBLIC_STREAM_BASE=https://<your host>` in `.env`.
+  For the streams, don't add a custom location per channel (a new channel then
+  sits on "Connecting"). Put this in the proxy host's *Advanced* tab instead,
+  so every channel's stream goes to Icecast:
+
+  ```nginx
+  location ~ ^/[a-z0-9_-]+\.(mp3|aac|opus)$ {
+      proxy_pass http://<server IP>:8000;
+      proxy_buffering off;
+      proxy_read_timeout 24h;
+      proxy_http_version 1.1;
+  }
+  ```
 - **Internal name like `rradio.hp`:** Let's Encrypt can't issue for it. Either
   use the Tailscale name above, or create your own certificate (e.g. with
   `mkcert`), upload it in NPM under *SSL Certificates › Custom*, and install
