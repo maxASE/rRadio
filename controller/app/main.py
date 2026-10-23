@@ -69,7 +69,7 @@ app = FastAPI(title="rRadio", version=__version__, lifespan=lifespan, docs_url="
 MEMBER_ROUTES = {
     "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio)"),
     "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire|history/\d+/play-next)"),
-    "DELETE": re.compile(r"/api/queue/.+"),
+    "DELETE": re.compile(r"/api/(queue/.+|history/\d+/replay)"),
 }
 
 
@@ -765,6 +765,26 @@ async def history_play_next(entry_id: int, channel: str | None = None):
         it.path, it.keep_file = info["path"], True
     engine.enqueue(it)
     return it.public()
+
+
+@app.delete("/api/history/{entry_id}/replay")
+async def history_forget(entry_id: int):
+    """Removes what is kept of a history entry (a recorded program or a voice message)
+    from memory before its 24 hours are up. Clips fetched again have nothing to remove."""
+    found = state.replay_of(entry_id)
+    if not found:
+        raise HTTPException(404, "nothing is kept of this")
+    channel, info = found
+    dev = restricted()
+    if dev and channel and not dev.may_use(channel):
+        raise HTTPException(403, "this device may not use that channel")
+    path = Path(info.get("path") or "")
+    if path.parent.name != "replay":  # own media files are not ours to delete
+        raise HTTPException(409, "nothing is stored for this; it is fetched again from its source")
+    engine.drop_recording(str(path))
+    path.unlink(missing_ok=True)
+    state.set_replay(entry_id, None)
+    return {"ok": True}
 
 
 @app.get("/api/spots/{spot_id}/info")
