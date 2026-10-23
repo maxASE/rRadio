@@ -789,25 +789,44 @@ class Engine:
             on_air_clips.append(nxt)
 
         if due and cs.on_program is None and not on_air_clips:
-            cs.on_program = due
-            why = cs.shows.get(due.program.id, {}).get("why", "") if due.program.trigger == "title" else ""
-            replay = self._start_recording(ch, cs, due.program)
-            self.store.add_history("program", due.program.name, due.program.name, "started", why, channel=ch.id,
-                                   replay=replay)
-            log.info("Program %s started on %s%s", due.program.name, ch.name, f" ({why})" if why else "")
+            window = program_window(due.program, now)
+            since = window[0].timestamp() if window else time.time() - 12 * 3600
+            running = self.store.open_program(ch.id, due.program.name, since)
+            if running:  # the server restarted during the program: carry on with it
+                entry_id, started, old = running
+                cs.on_program = DueProgram(due.program, datetime.fromtimestamp(started, now.tzinfo), due.end)
+                replay = self._start_recording(ch, cs, due.program, resume=old)
+                if replay != old:
+                    self.store.set_replay(entry_id, replay)
+                log.info("Program %s goes on on %s after a restart", due.program.name, ch.name)
+            else:
+                cs.on_program = due
+                why = cs.shows.get(due.program.id, {}).get("why", "") if due.program.trigger == "title" else ""
+                replay = self._start_recording(ch, cs, due.program)
+                self.store.add_history("program", due.program.name, due.program.name, "started", why, channel=ch.id,
+                                       replay=replay)
+                log.info("Program %s started on %s%s", due.program.name, ch.name, f" ({why})" if why else "")
 
         base = cs.on_program.program if cs.on_program else ch.station()
         await self._set_base(ch, cs, st, base)
 
     # --- programs kept for 24 h ----------------------------------------------------
 
-    def _start_recording(self, ch: Channel, cs: ChannelState, p: Program) -> dict | None:
+    def _start_recording(self, ch: Channel, cs: ChannelState, p: Program, resume: dict | None = None) -> dict | None:
         """Records a program marked "keep for 24 hours" from its own stream, next to the
         kept voice messages, so the apps can listen back to it. The history entry of its
-        start points at the file, which grows until the program ends."""
+        start points at the file, which grows until the program ends.
+
+        After a restart during the program (`resume`, the old replay info), recording goes
+        on in the same file if it is still there. Otherwise (the RAM disk is emptied with
+        the container) a new one starts, and "from" says when, since it misses the start."""
         self._stop_recording(cs)
         if not p.keep_day or p.kind != "stream" or not p.url:
-            return None
+            return resume or None
+        if resume and resume.get("path") and Path(resume["path"]).is_file():
+            cs.recording = asyncio.create_task(self._record(p, Path(resume["path"])))
+            log.info("Keeping program %s on %s: recording goes on in %s", p.name, ch.name, resume["path"])
+            return resume
         prune_replays(REPLAY_KEEP)
         folder = cache_dir(self.config.settings.cache_in_ram) / "replay"
         folder.mkdir(parents=True, exist_ok=True)
@@ -817,7 +836,8 @@ class Engine:
         cs.recording = asyncio.create_task(self._record(p, path))
         log.info("Keeping program %s on %s for 24 h in %s", p.name, ch.name, path)
         art = self.base_art(p, cs, "", "")
-        return {"path": str(path), "until": time.time() + REPLAY_KEEP, **({"art": art} if art else {})}
+        return {"path": str(path), "until": time.time() + REPLAY_KEEP, **({"art": art} if art else {}),
+                **({"from": time.time()} if resume is not None else {})}
 
     def _stop_recording(self, cs: ChannelState) -> None:
         if cs.recording:

@@ -15,12 +15,12 @@ from .sessions import Sessions
 DB_PATH = Path(os.environ.get("STATE_DB", "/data/state.db"))
 
 
-def replay_art(raw: str) -> str:
-    """The picture that was shown while the entry played, if it was noted."""
+def replay_field(raw: str, key: str):
+    """One field of an entry's replay info, e.g. the picture shown while it played."""
     try:
-        return (json.loads(raw) if raw else {}).get("art") or ""
+        return (json.loads(raw) if raw else {}).get(key)
     except ValueError:
-        return ""
+        return None
 
 
 def replay_available(raw: str) -> bool:
@@ -115,7 +115,8 @@ class Store:
                 (channel, channel, limit),
             ).fetchall()
         keys = ["id", "ts", "kind", "source", "title", "status", "detail"]
-        return [{**dict(zip(keys, r)), "replay": replay_available(r[7]), "art": replay_art(r[7])} for r in rows]
+        return [{**dict(zip(keys, r)), "replay": replay_available(r[7]),
+                 "art": replay_field(r[7], "art") or "", "replay_from": replay_field(r[7], "from")} for r in rows]
 
     def entry(self, entry_id: int) -> dict | None:
         """One history entry with its replay info (None if it can't be played again)."""
@@ -136,6 +137,28 @@ class Store:
         if not row or not replay_available(row[1]):
             return None
         return row[0], json.loads(row[1])
+
+    def open_program(self, channel: str, name: str, since: float) -> tuple[int, float, dict] | None:
+        """(id, start, replay info) of program `name` when its "started" entry is still the
+        newest program entry of the channel: it was on air when the server restarted."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT id, ts, title, status, replay FROM history WHERE kind = 'program' AND channel = ?"
+                " ORDER BY id DESC LIMIT 1",
+                (channel,),
+            ).fetchone()
+        if not row or row[2] != name or row[3] != "started" or row[1] < since:
+            return None
+        try:
+            replay = json.loads(row[4]) if row[4] else {}
+        except ValueError:
+            replay = {}
+        return row[0], row[1], replay
+
+    def set_replay(self, entry_id: int, replay: dict | None) -> None:
+        with self._lock, self._db:
+            self._db.execute("UPDATE history SET replay = ? WHERE id = ?",
+                             (json.dumps(replay) if replay else "", entry_id))
 
     def last_cutin(self, channel: str | None = None) -> dict | None:
         """The most recent clip that went on air (filtered-out items excluded)."""

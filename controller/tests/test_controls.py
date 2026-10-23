@@ -178,6 +178,49 @@ def test_a_kept_program_is_recorded_and_listened_back(admin, app_main, ram_dir):
     assert admin.post(f"/api/history/{entry['id']}/play-next").status_code == 409
 
 
+def test_a_restart_carries_on_with_the_program(app_main, ram_dir):
+    import asyncio
+
+    from app.config import Program
+
+    engine = app_main.engine
+    ch = engine.config.channels[0]
+    cs = engine.state(ch.id)
+    show = Program(name="Live am Abend", url="http://radio.example/live", keep_day=True)
+    old = ram_dir / "replay" / "program-old.mp3"
+    old.parent.mkdir(parents=True, exist_ok=True)
+    old.write_bytes(b"ID3" + b"\0" * 100)
+    engine.store.add_history("program", show.name, show.name, "started", channel=ch.id,
+                             replay={"path": str(old), "until": 1e12})
+    entry_id, _, replay = engine.store.open_program(ch.id, show.name, 0)
+    assert engine.store.open_program(ch.id, "Other show", 0) is None
+
+    async def fake_record(p, path):
+        await asyncio.sleep(3600)
+
+    async def run(resume):
+        engine._record = fake_record
+        out = engine._start_recording(ch, cs, show, resume=resume)
+        engine._stop_recording(cs)
+        await asyncio.sleep(0)
+        return out
+
+    try:
+        # The file survived (recordings on disk): it goes on in the same file.
+        assert asyncio.run(run(replay)) == replay
+        # The RAM disk was emptied: a new file that says when it starts.
+        old.unlink()
+        fresh = asyncio.run(run(replay))
+    finally:
+        del engine._record
+    assert fresh["path"] != str(old) and fresh["from"] > 0
+    engine.store.set_replay(entry_id, fresh)
+    entry = next(h for h in engine.store.history(5, ch.id) if h["id"] == entry_id)
+    assert entry["replay"] and entry["replay_from"] == fresh["from"]
+    engine.store.add_history("program", show.name, show.name, "ended", channel=ch.id)
+    assert engine.store.open_program(ch.id, show.name, 0) is None
+
+
 def test_programs_are_not_kept_unless_asked(app_main):
     from app.config import Program
 
