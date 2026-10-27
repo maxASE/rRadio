@@ -360,6 +360,8 @@ def build_status(request: Request, channel: str | None, a: Access) -> dict:
         listen = {c.id for c in cfg.channels if a.can_listen(c)}
         data["channels"] = [c for c in data["channels"] if c["id"] in listen]
         data["incoming"] = [i for i in data["incoming"] if i["channel"] in listen]
+        own = {s.id for s in cfg.video + cfg.podcasts if s.owner == a.uid}
+        data["sources"] = {k: v for k, v in (data.get("sources") or {}).items() if k in own}
     data["streams"] = stream_urls(request, data.get("channel", {}).get("id"))
     names = owner_names()
     for c in data.get("channels", []) + ([data["channel"]] if data.get("channel") else []):
@@ -1010,10 +1012,9 @@ async def search(q: str, channel: str | None = None, video: bool = False):
     cfg = store.config
     sources = [{"kind": "station", "id": s.id, "name": s.name} for s in ch.stations if low in s.name.lower()]
     sources += [{"kind": "spot", "id": s.id, "name": s.name} for s in ch.spots if low in s.name.lower()]
-    allowed = None if ch.all_sources else set(ch.sources)
     sources += [{"kind": kind, "id": s.id, "name": s.name}
                 for kind, items in (("video", cfg.video), ("podcasts", cfg.podcasts))
-                for s in items if low in s.name.lower() and (allowed is None or s.id in allowed)]
+                for s in items if low in s.name.lower() and ch.wants(s)]
     found = {"history": [{**e, "art": engine.art.path(e["art"])} for e in state.search(ch.id, text)],
              "sources": sources, "videos": []}
     if video and cfg.settings.invidious_url:

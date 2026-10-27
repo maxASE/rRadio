@@ -290,7 +290,8 @@ class Channel(BaseModel):
 
     It plays at /<mount>.mp3 (and .aac/.opus), with its own stations,
     programs and spots. It cuts in new items from every video channel and
-    podcast, or only from those listed in `sources` when `all_sources` is off.
+    podcast its owner added (the admin's or the user's own), or only from those
+    listed in `sources` when `all_sources` is off.
 
     `owner` is the id of the user it belongs to ("" = the admin). A `public`
     channel shows up for every user, who can listen but not change it.
@@ -322,8 +323,8 @@ class Channel(BaseModel):
     def station(self) -> Station | None:
         return next((s for s in self.stations if s.id == self.current_station), None)
 
-    def wants(self, source_id: str) -> bool:
-        return self.all_sources or source_id in self.sources
+    def wants(self, src: "VideoChannel | Podcast") -> bool:
+        return (self.all_sources and src.owner == self.owner) or src.id in self.sources
 
 
 def _migrate(data: dict) -> dict:

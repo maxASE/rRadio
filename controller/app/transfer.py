@@ -51,7 +51,7 @@ def _add_media(z: zipfile.ZipFile, paths: list[Path]) -> None:
 
 
 def export_channel(cfg: Config, ch: Channel) -> bytes:
-    used = lambda s: ch.wants(s.id)  # noqa: E731
+    used = lambda s: ch.wants(s)  # noqa: E731
     doc = {
         "rradio_export": FORMAT,
         "channel": dump(Config(channels=[ch]))["channels"][0],
@@ -163,7 +163,7 @@ def import_channel(cfg: Config, z: zipfile.ZipFile, name: str = "", owner: str =
     for key, match in (("video", "channel_id"), ("podcasts", "url")):
         mine = data[key]
         for s in doc.get(key) or []:
-            same = next((x for x in mine if x[match] == s.get(match)), None)
+            same = next((x for x in mine if x[match] == s.get(match) and x.get("owner", "") == owner), None)
             if same:
                 remap[s["id"]] = same["id"]
             else:
