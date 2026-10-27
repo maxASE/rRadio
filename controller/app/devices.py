@@ -6,6 +6,9 @@ A key is shown once at pairing and only its SHA-256 is stored, in state.db
 - admin: everything the web UI can do.
 - member: listen and control its own channels (status, skip, queue, cut-ins,
   station), but no settings, sources or schedule.
+
+A device paired by a user belongs to that user (`user_id`): it is a member
+that can control the user's own channels and listen to public ones.
 """
 
 from __future__ import annotations
@@ -31,13 +34,14 @@ class Device:
     channels: list[str]  # empty = all channels
     created: float
     last_seen: float | None = None
+    user_id: str = ""  # the user who paired it; "" = paired by the admin
 
     def may_use(self, cid: str) -> bool:
         return self.role == "admin" or not self.channels or cid in self.channels
 
     def public(self) -> dict:
         return {"id": self.id, "name": self.name, "role": self.role, "channels": self.channels,
-                "created": self.created, "last_seen": self.last_seen}
+                "created": self.created, "last_seen": self.last_seen, "user_id": self.user_id}
 
 
 @dataclass
@@ -48,6 +52,7 @@ class Pairing:
     channels: list[str]
     expires: float
     attempts: int = field(default=0)
+    user_id: str = ""
 
 
 # The device behind the current request; None for the web UI (Basic auth or no password).
@@ -75,23 +80,27 @@ class Devices:
                     last_seen REAL
                 )"""
             )
+            cols = {r[1] for r in self._db.execute("PRAGMA table_info(devices)")}
+            if "user_id" not in cols:
+                self._db.execute("ALTER TABLE devices ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
 
     @staticmethod
     def _row(r) -> Device:
         return Device(id=r[0], name=r[1], role=r[2], channels=[c for c in r[3].split(",") if c],
-                      created=r[4], last_seen=r[5])
+                      created=r[4], last_seen=r[5], user_id=r[6])
 
-    def list(self) -> list[Device]:
+    def list(self, user_id: str | None = None) -> list[Device]:
+        """All devices, or only those of one user."""
         with self._lock:
             rows = self._db.execute(
-                "SELECT id, name, role, channels, created, last_seen FROM devices ORDER BY created"
+                "SELECT id, name, role, channels, created, last_seen, user_id FROM devices ORDER BY created"
             ).fetchall()
-        return [self._row(r) for r in rows]
+        return [d for d in map(self._row, rows) if user_id is None or d.user_id == user_id]
 
     def by_token(self, token: str) -> Device | None:
         with self._lock:
             r = self._db.execute(
-                "SELECT id, name, role, channels, created, last_seen FROM devices WHERE token_hash=?",
+                "SELECT id, name, role, channels, created, last_seen, user_id FROM devices WHERE token_hash=?",
                 (_hash(token),),
             ).fetchone()
         if r is None:
@@ -124,24 +133,31 @@ class Devices:
         with self._lock, self._db:
             return self._db.execute("DELETE FROM devices WHERE id=?", (did,)).rowcount > 0
 
+    def delete_user(self, user_id: str) -> None:
+        """Revoke every device of a user (when the user is removed)."""
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM devices WHERE user_id=?", (user_id,))
+        for c in [c for c, p in self._pairings.items() if p.user_id == user_id]:
+            del self._pairings[c]
+
     # --- pairing -------------------------------------------------------------------
 
-    def start_pairing(self, name: str, role: str, channels: list[str]) -> Pairing:
+    def start_pairing(self, name: str, role: str, channels: list[str], user_id: str = "") -> Pairing:
         if role not in ROLES:
             raise ValueError(f"role must be one of {', '.join(ROLES)}")
         self._expire()
         code = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(10))
         p = Pairing(code=code, name=name.strip()[:60] or "Device", role=role, channels=channels,
-                    expires=time.time() + PAIRING_MINUTES * 60)
+                    expires=time.time() + PAIRING_MINUTES * 60, user_id=user_id)
         self._pairings[code] = p
         return p
 
     def cancel_pairing(self, code: str) -> None:
         self._pairings.pop(self._norm(code), None)
 
-    def pending(self) -> list[Pairing]:
+    def pending(self, user_id: str | None = None) -> list[Pairing]:
         self._expire()
-        return list(self._pairings.values())
+        return [p for p in self._pairings.values() if user_id is None or p.user_id == user_id]
 
     def redeem(self, code: str, device_name: str = "") -> tuple[Device, str]:
         """Swap a one-time pairing code for a device and its key (shown only now)."""
@@ -156,11 +172,11 @@ class Devices:
             raise LookupError("unknown or expired pairing code")
         token = "rr_" + secrets.token_urlsafe(32)
         dev = Device(id=secrets.token_hex(4), name=(device_name.strip()[:60] or p.name), role=p.role,
-                     channels=p.channels, created=now, last_seen=now)
+                     channels=p.channels, created=now, last_seen=now, user_id=p.user_id)
         with self._lock, self._db:
             self._db.execute(
-                "INSERT INTO devices (id, name, token_hash, role, channels, created, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (dev.id, dev.name, _hash(token), dev.role, ",".join(dev.channels), dev.created, dev.last_seen),
+                "INSERT INTO devices (id, name, token_hash, role, channels, created, last_seen, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (dev.id, dev.name, _hash(token), dev.role, ",".join(dev.channels), dev.created, dev.last_seen, dev.user_id),
             )
         return dev, token
 

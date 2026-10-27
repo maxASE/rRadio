@@ -155,6 +155,7 @@ class VideoChannel(Filters):
     name: str
     channel_id: str
     enabled: bool = True
+    owner: str = ""  # id of the user who added it; "" = the admin
     min_minutes: float = 1  # skips very short videos by default
 
 
@@ -163,6 +164,7 @@ class Podcast(Filters):
     name: str
     url: str
     enabled: bool = True
+    owner: str = ""
 
 
 class Spot(BaseModel):
@@ -289,6 +291,9 @@ class Channel(BaseModel):
     It plays at /<mount>.mp3 (and .aac/.opus), with its own stations,
     programs and spots. It cuts in new items from every video channel and
     podcast, or only from those listed in `sources` when `all_sources` is off.
+
+    `owner` is the id of the user it belongs to ("" = the admin). A `public`
+    channel shows up for every user, who can listen but not change it.
     """
 
     id: str = Field(default_factory=new_id)
@@ -300,6 +305,8 @@ class Channel(BaseModel):
     spots: list[Spot] = Field(default_factory=list)
     all_sources: bool = True
     sources: list[str] = Field(default_factory=list)
+    owner: str = ""
+    public: bool = False
 
     @model_validator(mode="after")
     def _check(self) -> "Channel":

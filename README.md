@@ -277,6 +277,35 @@ player at a stream: `http://<server>:8080/listen.m3u?fmt=aac`. Add
   the same user and password as HTTP Basic auth. The streams and playlist files
   stay open so players don't need a login.
 
+## Users and public channels
+
+With `UI_PASSWORD` set, the `UI_USERNAME` login is the **admin**: it sees and
+changes everything. Under **Settings › Users** the admin adds more logins
+(name and password, at least 8 characters). Each user logs in on the same page
+and gets their own part of rRadio:
+
+- **Own channels.** A user's **+ New channel** belongs to them. They change its
+  stations, programs, spots and settings; nobody else but the admin can.
+- **Public channels.** Ticking **Public** under a channel's *Channel settings*
+  shows it to every other user under *Public channels* on Home. They can
+  listen, see what is on and its schedule, but not change it, skip or cut in.
+- **Sources.** Video channels and podcasts are one shared list. Users can add
+  more and tick them on their own channels; only whoever added one (or the
+  admin) can change its filters or remove it.
+- **Own files.** A user's uploads go into `users/<name>/` in the media folder,
+  and their spots can only play files from there.
+- **Apps.** A user pairs their own phones under *Settings › Apps and devices*.
+  Such an app controls the user's channels and listens to public ones.
+- Server settings, backups and the user list stay with the admin. A user
+  changes their own password under *Settings › Your account*.
+
+The admin can hand a channel to a user (*Belongs to* in its Channel settings).
+Removing a user logs them out, revokes their apps and gives their channels to
+the admin as private channels, so nothing stops playing. Owners are stored in
+`config.yaml` (`owner:` holds the user's id, `public: true` shares a channel);
+accounts and password hashes live in `state.db`. Channels from before this
+feature belong to the admin.
+
 ## HTTPS and remote access
 
 Phones and browsers increasingly insist on HTTPS: browsers only allow the
@@ -444,7 +473,8 @@ The app sends `POST /api/pair` with `{"code": "...", "device_name": "..."}`
 (open without the password) and gets back `{"token": "rr_...", "device": {...},
 "channels": [...], "streams": {...}}`. It then sends
 `Authorization: Bearer <token>` with every request; `GET /api/me` says which
-device, role and channels the key has. Keys are stored only as SHA-256 hashes
+device, role and channels the key has (each with `can_edit`: false for
+someone else's public channel, which the app can only listen to). Keys are stored only as SHA-256 hashes
 in `state.db`, so they never end up in `config.yaml` or a backup. A removed or
 unknown key gets `401`, a forbidden action `403`.
 

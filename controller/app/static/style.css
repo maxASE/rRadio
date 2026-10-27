@@ -170,6 +170,17 @@ label.inline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 /* home */
 .channel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; margin-bottom: 20px; }
 .channel-grid .card { margin: 0; }
+.channel-grid .grid-head { grid-column: 1 / -1; margin: 8px 0 -8px; }
+.owner-tag { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+.owner-tag.public { color: var(--accent-ink); background: var(--accent-soft); border-color: var(--accent-line); }
+
+/* Accounts: users don't see admin things; others' public channels are listen-only. */
+body.is-user .admin-only, body:not(.is-user) .user-only, body:not(.readonly) .readonly-only,
+body.readonly .edit-only, body.readonly :is(#queue, #why, #programs, #spots, #tl-pop) button,
+body.readonly :is(#programs, #spots) input, body.readonly #station-chips .add-link { display: none !important; }
+body.readonly #station-chips { pointer-events: none; }
+.readonly-note { padding: 10px 14px; border-radius: 8px; background: var(--accent-soft); color: var(--accent-ink); border: 1px solid var(--accent-line); }
+.user-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .channel-card { display: flex; flex-direction: column; gap: 12px; }
 .card-title { font-size: 1.15rem; font-weight: 700; color: var(--text); text-decoration: none; }
 .card-title:hover { color: var(--accent); }

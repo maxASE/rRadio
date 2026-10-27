@@ -34,26 +34,37 @@ class Sessions:
                     expires REAL NOT NULL
                 )"""
             )
+            cols = {r[1] for r in self._db.execute("PRAGMA table_info(sessions)")}
+            if "user_id" not in cols:  # "" = the admin from .env
+                self._db.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
 
-    def create(self) -> str:
+    def create(self, user_id: str = "") -> str:
         token = secrets.token_urlsafe(32)
         now = time.time()
         with self._lock, self._db:
             self._db.execute("DELETE FROM sessions WHERE expires < ?", (now,))
-            self._db.execute("INSERT INTO sessions (token_hash, created, expires) VALUES (?, ?, ?)",
-                             (_hash(token), now, now + DAYS * 86400))
+            self._db.execute("INSERT INTO sessions (token_hash, created, expires, user_id) VALUES (?, ?, ?, ?)",
+                             (_hash(token), now, now + DAYS * 86400, user_id))
         return token
 
-    def valid(self, token: str) -> bool:
+    def user_of(self, token: str) -> str | None:
+        """Who is logged in with this token: a user id, "" for the admin, or None."""
         if not token:
-            return False
+            return None
         with self._lock:
-            row = self._db.execute("SELECT expires FROM sessions WHERE token_hash=?", (_hash(token),)).fetchone()
-        return row is not None and row[0] > time.time()
+            row = self._db.execute("SELECT expires, user_id FROM sessions WHERE token_hash=?", (_hash(token),)).fetchone()
+        return row[1] if row is not None and row[0] > time.time() else None
+
+    def valid(self, token: str) -> bool:
+        return self.user_of(token) is not None
 
     def end(self, token: str) -> None:
         with self._lock, self._db:
             self._db.execute("DELETE FROM sessions WHERE token_hash=?", (_hash(token),))
+
+    def end_user(self, user_id: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
 
     def end_all(self) -> None:
         with self._lock, self._db:

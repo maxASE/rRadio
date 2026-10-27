@@ -26,9 +26,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
 from . import API_VERSION, __version__
-from . import devices as devmod
+from . import access as accmod
 from . import media, transfer
 from .art import find_station_logo, image_file, save_image
+from .access import ADMIN, Access, merge_user_config, visible_config
 from .config import SECRET_MASK, Config, ConfigStore, Podcast, Station, dump
 from .engine import SAVED_DIR, Engine, short_error
 from .liq import Liquidsoap
@@ -53,6 +54,7 @@ store = ConfigStore()
 state = Store()
 devices = state.devices
 sessions = state.sessions
+users = state.users
 engine = Engine(store, state, Liquidsoap())
 
 
@@ -73,62 +75,118 @@ MEMBER_ROUTES = {
     "DELETE": re.compile(r"/api/(queue/.+|history/\d+/(replay|save))"),
 }
 
+# What a user (not an admin) may call from the web UI; each call is then limited to
+# the user's own channels, sources, files and devices (or public channels to listen).
+USER_ROUTES = {
+    "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio|now/audio|navidrome/playlists|week"
+                      r"|config|media|devices|channels/[^/]+/export|spots/[^/]+/info)"),
+    "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire"
+                       r"|history/\d+/play-next|quiet|media|images|video/resolve|station/logo|podcast/resolve|feeds/check"
+                       r"|programs/title-check|check|devices/pair|import|me/password|logout)"),
+    "PUT": re.compile(r"/api/config"),
+    "PATCH": re.compile(r"/api/devices/[^/]+"),
+    "DELETE": re.compile(r"/api/(queue/.+|history/\d+/replay|media/.+|devices/pair/.+|devices/[^/]+)"),
+}
+
+
+def _allowed(routes: dict, request: Request) -> bool:
+    rule = routes.get(request.method)
+    return bool(rule and rule.fullmatch(request.url.path))
+
 
 @app.middleware("http")
 async def basic_auth(request: Request, call_next):
     """Optional password for the UI, or a device key from an app (Authorization: Bearer).
     Playlist links and the logo stay open for players and dashboards."""
     auth = request.headers.get("authorization", "")
+    a: Access | None = None
     if auth.lower().startswith("bearer "):
         dev = await run_in_threadpool(devices.by_token, auth[7:].strip())
-        if dev is None:
+        user = await run_in_threadpool(users.get, dev.user_id) if dev and dev.user_id else None
+        if dev is None or (dev.user_id and user is None):
             return JSONResponse({"detail": "unknown or removed device key; pair the app again"}, status_code=401)
-        rule = MEMBER_ROUTES.get(request.method)
-        if dev.role != "admin" and not (rule and rule.fullmatch(request.url.path)):
+        a = Access(admin=dev.role == "admin" and (user is None or user.admin), user=user, device=dev)
+        if not a.admin and not _allowed(MEMBER_ROUTES, request):
             return JSONResponse({"detail": "this device is not allowed to do that"}, status_code=403)
-        token = devmod.current.set(dev)
-        try:
-            return await call_next(request)
-        finally:
-            devmod.current.reset(token)
     path = request.url.path
     open_paths = ("/listen.", "/healthz", "/static/", "/login", "/api/login", "/api/art/now/", "/api/pair") + (("/api/widget",) if WIDGET_PUBLIC else ())
-    if UI_PASSWORD and not path.startswith(open_paths):
+    if a is None and UI_PASSWORD and not path.startswith(open_paths):
         # The browser logs in on /login and gets a cookie; dashboards and scripts may send Basic auth.
-        ok = await run_in_threadpool(sessions.valid, request.cookies.get(COOKIE, ""))
-        if not ok and auth.lower().startswith("basic "):
+        a = await run_in_threadpool(session_access, request.cookies.get(COOKIE, ""))
+        if a is None and auth.lower().startswith("basic "):
             try:
-                user, _, pw = base64.b64decode(auth[6:]).decode().partition(":")
-                ok = credentials_ok(user, pw)
+                name, _, pw = base64.b64decode(auth[6:]).decode().partition(":")
+                a = await run_in_threadpool(login_access, name, pw)
             except Exception:
-                ok = False
-        if not ok:
+                a = None
+        if a is None:
             if request.method == "GET" and not path.startswith("/api/"):
                 return RedirectResponse("/login" + ("" if path == "/" else "?next=" + quote(path)), status_code=303)
             return JSONResponse({"detail": "log in first"}, status_code=401)
-    return await call_next(request)
+        if not a.admin and path.startswith("/api/") and not _allowed(USER_ROUTES, request):
+            return JSONResponse({"detail": "only the admin can do that"}, status_code=403)
+    if a is None:
+        return await call_next(request)
+    token = accmod.current.set(a)
+    try:
+        return await call_next(request)
+    finally:
+        accmod.current.reset(token)
 
 
 def credentials_ok(user: str, pw: str) -> bool:
+    """The admin's user name and password from .env."""
     return secrets.compare_digest(user.encode(), UI_USER.encode()) and secrets.compare_digest(pw.encode(), UI_PASSWORD.encode())
 
 
-def restricted() -> devmod.Device | None:
-    """The app device behind this request if it is limited to some channels or actions."""
-    dev = devmod.current.get()
-    return dev if dev and dev.role != "admin" else None
+def login_access(name: str, pw: str) -> Access | None:
+    """The admin (from .env) or a user with this name and password."""
+    if credentials_ok(name, pw):
+        return ADMIN
+    user = users.check(name, pw)
+    return Access(admin=user.admin, user=user) if user else None
 
 
-def channel_or_404(cid: str | None):
-    dev = restricted()
-    if cid is None and dev and dev.channels:  # default to the device's first channel
-        cid = next((c.id for c in store.config.channels if dev.may_use(c.id)), None)
+def session_access(token: str) -> Access | None:
+    uid = sessions.user_of(token)
+    if uid is None:
+        return None
+    if uid == "":
+        return ADMIN
+    user = users.get(uid)
+    return Access(admin=user.admin, user=user) if user else None
+
+
+def acc() -> Access:
+    return accmod.current.get()
+
+
+def _channel(cid: str | None, ok, verb: str):
+    a = acc()
+    if cid is None and not a.admin:  # default to the first channel this person may use
+        cid = next((c.id for c in store.config.channels if ok(c)), None)
+        if cid is None:
+            raise HTTPException(404, "no channel yet")
     ch = store.config.channel(cid)
     if ch is None:
         raise HTTPException(404, "unknown channel")
-    if dev and not dev.may_use(ch.id):
-        raise HTTPException(403, "this device may not use that channel")
+    if not ok(ch):
+        raise HTTPException(403, f"you may not {verb} that channel")
     return ch
+
+
+def channel_or_404(cid: str | None):
+    """A channel the caller may control (skip, cut in, change its station or program)."""
+    return _channel(cid, acc().can_control, "change")
+
+
+def listen_channel(cid: str | None):
+    """A channel the caller may listen to and look at: their own, or a public one."""
+    a = acc()
+    if cid is None and not a.admin:  # own channels first
+        mine = next((c.id for c in store.config.channels if a.can_control(c)), None)
+        cid = mine or cid
+    return _channel(cid, a.can_listen, "listen to")
 
 
 @app.middleware("http")
@@ -194,11 +252,12 @@ async def login(body: Login, request: Request):
     addr = request.client.host if request.client else ""
     if sessions.blocked(addr):
         raise HTTPException(429, "Too many wrong passwords. Wait five minutes and try again.")
-    if not credentials_ok(body.username.strip() or UI_USER, body.password):
+    a = await run_in_threadpool(login_access, body.username.strip() or UI_USER, body.password)
+    if a is None:
         sessions.failed(addr)
         log.warning("wrong UI password from %s", addr)
         raise HTTPException(401, "Wrong user name or password.")
-    token = await run_in_threadpool(sessions.create)
+    token = await run_in_threadpool(sessions.create, a.uid)
     resp = JSONResponse({"ok": True})
     https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "") == "https"
     resp.set_cookie(COOKIE, token, max_age=DAYS * 86400, httponly=True, samesite="lax", secure=https, path="/")
@@ -222,7 +281,7 @@ async def healthz():
 
 
 def _playlist(request: Request, fmt: str, channel: str | None) -> tuple[str, str, str]:
-    ch = channel_or_404(channel)
+    ch = listen_channel(channel)
     urls = stream_urls(request, ch.id)
     return urls.get(fmt) or next(iter(urls.values())), ch.name, ch.mount
 
@@ -249,10 +308,12 @@ async def pls(request: Request, fmt: str = "mp3", channel: str | None = None):
 @app.get("/api/status")
 async def status(request: Request, channel: str | None = None):
     """What is on air on one channel (the first one if none is given)."""
-    dev = restricted()
-    if dev:
-        channel = channel_or_404(channel).id
-    return build_status(request, channel, dev)
+    a = acc()
+    if not a.admin:
+        if channel is None and not _channels_of(a):
+            return empty_status()
+        channel = listen_channel(channel).id
+    return build_status(request, channel, a)
 
 
 EVENTS_PING = 20  # seconds between keep-alive comments on /api/events
@@ -265,9 +326,9 @@ async def events(request: Request, channel: str | None = None):
     at the start and then only when something changes, instead of being polled.
     A comment line every 20 seconds keeps proxies from closing the connection;
     after 30 minutes the server ends it and the browser reconnects (and logs in again)."""
-    dev = restricted()
-    if dev:
-        channel = channel_or_404(channel).id
+    a = acc()
+    if not a.admin and not (channel is None and not _channels_of(a)):
+        channel = listen_channel(channel).id
 
     async def feed():
         started, seen = time.monotonic(), -1
@@ -275,7 +336,8 @@ async def events(request: Request, channel: str | None = None):
         while time.monotonic() - started < EVENTS_MAX and not await request.is_disconnected():
             if engine.version != seen:
                 seen = engine.version
-                yield f"data: {json.dumps(build_status(request, channel, dev), default=str)}\n\n"
+                data = build_status(request, channel, a) if a.admin or channel else empty_status()
+                yield f"data: {json.dumps(data, default=str)}\n\n"
             else:
                 yield ": ping\n\n"
             await engine.wait_change(seen, EVENTS_PING)
@@ -284,15 +346,28 @@ async def events(request: Request, channel: str | None = None):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-def build_status(request: Request, channel: str | None, dev: devmod.Device | None) -> dict:
+def empty_status() -> dict:
+    """For a user who has no channel yet and sees no public one."""
+    return {"now": {"mode": "offline"}, "engine_up": engine.liq_up, "channels": [], "incoming": [], "queue": [],
+            "history": [], "streams": {}, "station_name": store.config.settings.station_name,
+            "time": engine.now().isoformat()}
+
+
+def build_status(request: Request, channel: str | None, a: Access) -> dict:
     data = engine.status(channel)
-    if dev:
-        data["channels"] = [c for c in data["channels"] if dev.may_use(c["id"])]
-        data["incoming"] = [i for i in data["incoming"] if dev.may_use(i["channel"])]
+    cfg = store.config
+    if not a.admin:
+        listen = {c.id for c in cfg.channels if a.can_listen(c)}
+        data["channels"] = [c for c in data["channels"] if c["id"] in listen]
+        data["incoming"] = [i for i in data["incoming"] if i["channel"] in listen]
     data["streams"] = stream_urls(request, data.get("channel", {}).get("id"))
-    for c in data.get("channels", []):
+    names = owner_names()
+    for c in data.get("channels", []) + ([data["channel"]] if data.get("channel") else []):
         urls = stream_urls(request, c["id"])
         c["stream"] = urls.get("mp3") or next(iter(urls.values()), "")
+        ch = cfg.channel(c["id"])
+        if ch:
+            c.update(owner=ch.owner, owner_name=names.get(ch.owner, ""), public=ch.public, can_edit=a.can_control(ch))
     data["station_name"] = store.config.settings.station_name
     return data
 
@@ -300,16 +375,24 @@ def build_status(request: Request, channel: str | None, dev: devmod.Device | Non
 @app.get("/api/widget")
 async def widget(channel: str | None = None):
     """Read-only summary for dashboards (e.g. Homepage's customapi widget)."""
-    return engine.widget(channel_or_404(channel).id if restricted() else channel)
+    return engine.widget(listen_channel(channel).id if not acc().admin else channel)
 
 
 @app.get("/api/config")
 async def get_config():
-    return store.config.masked()
+    """The whole config; a user gets their own and the public channels."""
+    return visible_config(store.config, acc())
 
 
 @app.put("/api/config")
 async def put_config(body: dict):
+    """Save the whole config. A user's save only changes their own channels and sources."""
+    a = acc()
+    if not a.admin:
+        try:
+            body = merge_user_config(store.config, body, a.user)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
     st = body.get("settings")
     if isinstance(st, dict) and st.get("navidrome_password") == SECRET_MASK:
         st["navidrome_password"] = store.config.settings.navidrome_password
@@ -323,7 +406,7 @@ async def put_config(body: dict):
     for s in cfg.video + cfg.podcasts:
         if s.id not in old_sources:
             engine.check_now(s.id)  # do the initial sync right away
-    return cfg.masked()
+    return visible_config(cfg, a)
 
 
 @app.get("/api/config.yaml", include_in_schema=False)
@@ -352,11 +435,15 @@ async def backup():
 
 @app.post("/api/import")
 async def import_file(file: UploadFile = File(...), name: str = Form(""), replace: bool = Form(False)):
-    """A channel export adds a channel; a full backup replaces the whole config."""
+    """A channel export adds a channel; a full backup replaces the whole config.
+    A user can import channels only; they become the user's, with their audio
+    in the user's own folder."""
+    a = acc()
     data = await file.read()
     old_sources = {s.id for s in store.config.video + store.config.podcasts}
     try:
-        cfg, summary = await run_in_threadpool(transfer.import_zip, store.config, data, name, store.path, replace)
+        cfg, summary = await run_in_threadpool(transfer.import_zip, store.config, data, name, store.path, replace,
+                                               "" if a.admin else a.uid, "" if a.admin else a.user.folder)
     except transfer.NeedsConfirm as e:
         raise HTTPException(409, str(e))
     except ValidationError as e:
@@ -369,7 +456,7 @@ async def import_file(file: UploadFile = File(...), name: str = Form(""), replac
         if s.id not in old_sources:
             engine.check_now(s.id)
     log.info(summary)
-    return {"summary": summary, "config": cfg.masked()}
+    return {"summary": summary, "config": visible_config(cfg, a)}
 
 
 class StationChoice(BaseModel):
@@ -431,7 +518,7 @@ async def quiet(body: QuietBody):
 @app.get("/api/week")
 async def week(channel: str | None = None, day: str | None = None):
     """The channel's schedule for the week that `day` (YYYY-MM-DD, default today) is in."""
-    ch = channel_or_404(channel)
+    ch = listen_channel(channel)
     try:
         d = date.fromisoformat(day) if day else None
     except ValueError:
@@ -457,10 +544,9 @@ async def skip(channel: str | None = None):
 
 @app.delete("/api/queue/{key:path}")
 async def remove(key: str):
-    dev = restricted()
     it = next((i for i in engine.items if i.uid == key), None)
-    if dev and it and not dev.may_use(it.channel):
-        raise HTTPException(403, "this device may not use that channel")
+    if it:
+        channel_or_404(it.channel)
     if not engine.remove(key):
         raise HTTPException(404, "not in queue or already on air")
     return {"ok": True}
@@ -669,13 +755,35 @@ async def navidrome_playlists():
 # --- own media -------------------------------------------------------------------
 
 
+def own_media(path: str) -> str:
+    """A path in the media library the caller may use: a user only their own folder."""
+    a = acc()
+    path = path.lstrip("/")
+    if not a.admin and not path.startswith(a.user.folder):
+        raise HTTPException(404, "no such file")
+    return path
+
+
 @app.get("/api/media")
 async def list_media():
-    return await run_in_threadpool(media.library)
+    """Own audio files; a user sees only their own folder (users/<name>/)."""
+    lib = await run_in_threadpool(media.library)
+    a = acc()
+    if not a.admin:
+        f = a.user.folder
+        lib = {"files": [x for x in lib["files"] if x["path"].startswith(f)],
+               "folders": [x for x in lib["folders"] if (x + "/").startswith(f)],
+               "home": f}
+    return lib
 
 
 @app.post("/api/media")
 async def upload_media(file: UploadFile = File(...), folder: str = Form("")):
+    a = acc()
+    if not a.admin:  # into the user's own folder
+        folder = folder.strip().strip("/")
+        home = a.user.folder.rstrip("/")
+        folder = folder if folder == home or folder.startswith(home + "/") else f"{home}/{folder}".rstrip("/")
     try:
         rel = await run_in_threadpool(media.save_upload, file.file, file.filename or "upload.mp3", folder)
     except ValueError as e:
@@ -688,7 +796,7 @@ async def upload_media(file: UploadFile = File(...), folder: str = Form("")):
 @app.delete("/api/media/{path:path}")
 async def delete_media(path: str):
     try:
-        media.delete(path)
+        media.delete(own_media(path))
     except (ValueError, FileNotFoundError):
         raise HTTPException(404, "no such file")
     return {"ok": True}
@@ -703,7 +811,7 @@ class PlayMedia(BaseModel):
 async def play_media(body: PlayMedia):
     ch = channel_or_404(body.channel)
     try:
-        p = media.resolve(body.path)
+        p = media.resolve(own_media(body.path))
     except ValueError:
         raise HTTPException(404, "no such file")
     if not p.is_file():
@@ -721,9 +829,10 @@ async def voice_message(file: UploadFile = File(...), channel: str = Form("all")
     """A recorded voice message, cut in right away on one channel or on all
     ("all"). The file goes to the RAM disk (when there is one, whatever the
     download setting) and is deleted once it has played everywhere."""
-    dev = devmod.current.get()
+    a = acc()
+    dev = a.device
     if channel == "all":
-        targets = [c for c in store.config.channels if dev is None or dev.may_use(c.id)]
+        targets = [c for c in store.config.channels if a.can_control(c)]
         if not targets:
             raise HTTPException(404, "no channel to play on")
     else:
@@ -739,7 +848,7 @@ async def voice_message(file: UploadFile = File(...), channel: str = Form("all")
         raise HTTPException(400, "the recording is empty")
     path = cache_dir(True) / f"voice-{secrets.token_hex(6)}.{ext}"
     await run_in_threadpool(path.write_bytes, data)
-    who = dev.name if dev else "web"
+    who = dev.name if dev else (a.user.name if a.user else "web")
     it = Item(kind="voice", source_id="voice", source_name="Voice message", item_id=path.name,
               title=title.strip()[:80] or f"Voice message from {who}", media=str(path), path=str(path),
               priority=1, during_programs=True)
@@ -762,9 +871,8 @@ async def history_audio(entry_id: int, request: Request):
     if not found:
         raise HTTPException(404, "this can no longer be played again")
     channel, info = found
-    dev = restricted()
-    if dev and channel and not dev.may_use(channel):
-        raise HTTPException(403, "this device may not use that channel")
+    if channel:
+        listen_channel(channel)
     return await replay_response(info, request)
 
 
@@ -773,7 +881,7 @@ async def now_audio(request: Request, channel: str | None = None, key: str | Non
     """The cut-in on air now, for one listener: lets the apps scroll back in a clip
     while the radio plays it. With `key` (now.key in the status) it answers 410 once
     that clip is over, rather than serving the next one."""
-    ch = channel_or_404(channel)
+    ch = listen_channel(channel)
     info = engine.now_audio(ch.id, key)
     if not info:
         raise HTTPException(410, "that clip is over")
@@ -843,9 +951,8 @@ async def history_forget(entry_id: int):
     if not found:
         raise HTTPException(404, "nothing is kept of this")
     channel, info = found
-    dev = restricted()
-    if dev and channel and not dev.may_use(channel):
-        raise HTTPException(403, "this device may not use that channel")
+    if channel:
+        channel_or_404(channel)
     path = Path(info.get("path") or "")
     if path.parent.name != "replay" and path.parent != SAVED_DIR:  # own media files are not ours to delete
         raise HTTPException(409, "nothing is stored for this; it is fetched again from its source")
@@ -940,6 +1047,9 @@ async def queue_order(body: QueueOrder):
 @app.get("/api/spots/{spot_id}/info")
 async def spot_info(spot_id: str):
     """A spot's picture and, for a feed, its newest episode."""
+    found = store.config.spot(spot_id)
+    if found:
+        listen_channel(found[0].id)
     try:
         return await engine.spot_info(spot_id)
     except LookupError as e:
@@ -951,10 +1061,9 @@ async def spot_info(spot_id: str):
 @app.post("/api/spots/{spot_id}/fire")
 async def fire_spot(spot_id: str):
     """Play a spot now, ignoring its schedule."""
-    dev = restricted()
     found = store.config.spot(spot_id)
-    if dev and found and not dev.may_use(found[0].id):
-        raise HTTPException(403, "this device may not use that channel")
+    if found:
+        channel_or_404(found[0].id)
     try:
         await engine.fire_spot(spot_id)
     except LookupError as e:
@@ -990,29 +1099,147 @@ async def title_check(body: TitleCheck):
     return out
 
 
+# --- users -------------------------------------------------------------------------
+
+
+def owner_names() -> dict[str, str]:
+    """User id to name, for "by Anna" on public channels; "" is the admin."""
+    return {"": UI_USER, **{u.id: u.name for u in users.list()}}
+
+
+def _user_public(u) -> dict:
+    cfg = store.config
+    return {**u.public(), "folder": u.folder,
+            "channels": [{"id": c.id, "name": c.name, "public": c.public} for c in cfg.channels if c.owner == u.id],
+            "devices": len(devices.list(u.id))}
+
+
+@app.get("/api/users")
+async def list_users():
+    """Everyone who can log in (admin only). The admin from .env is not in the list."""
+    return {"admin": UI_USER, "password_set": bool(UI_PASSWORD),
+            "users": [_user_public(u) for u in await run_in_threadpool(users.list)]}
+
+
+class UserNew(BaseModel):
+    name: str
+    password: str
+    role: str = "user"
+
+
+@app.post("/api/users")
+async def add_user(body: UserNew):
+    try:
+        u = await run_in_threadpool(users.create, body.name, body.password, body.role)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    log.info("added user %s (%s)", u.name, u.role)
+    return _user_public(u)
+
+
+class UserEdit(BaseModel):
+    password: str | None = None
+    role: str | None = None
+
+
+@app.patch("/api/users/{uid}")
+async def edit_user(uid: str, body: UserEdit):
+    """A new password (logs the user out everywhere) or role."""
+    try:
+        u = await run_in_threadpool(users.update, uid, body.password, body.role)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    if u is None:
+        raise HTTPException(404, "unknown user")
+    if body.password is not None:
+        await run_in_threadpool(sessions.end_user, uid)
+    return _user_public(u)
+
+
+@app.delete("/api/users/{uid}")
+async def remove_user(uid: str):
+    """Remove a user: they are logged out and their apps' keys stop working.
+    Their channels and sources go to the admin (and become private), so nothing
+    stops playing; their files stay in the media folder."""
+    u = await run_in_threadpool(users.get, uid)
+    if u is None:
+        raise HTTPException(404, "unknown user")
+    data = store.config.model_dump()
+    for c in data["channels"]:
+        if c["owner"] == uid:
+            c["owner"], c["public"] = "", False
+    for s in data["video"] + data["podcasts"]:
+        if s["owner"] == uid:
+            s["owner"] = ""
+    store.save(Config.model_validate(data))
+    await run_in_threadpool(users.delete, uid)
+    await run_in_threadpool(sessions.end_user, uid)
+    await run_in_threadpool(devices.delete_user, uid)
+    log.info("removed user %s", u.name)
+    return {"ok": True}
+
+
+class PasswordChange(BaseModel):
+    old: str
+    new: str
+
+
+@app.post("/api/me/password")
+async def change_password(body: PasswordChange, request: Request):
+    """A user changes their own password (the admin's is UI_PASSWORD in .env).
+    Other browsers where they are logged in are logged out."""
+    a = acc()
+    if a.user is None:
+        raise HTTPException(409, "the admin's password is UI_PASSWORD in .env")
+    if users.check(a.user.name, body.old) is None:
+        raise HTTPException(403, "the current password is wrong")
+    try:
+        await run_in_threadpool(users.update, a.user.id, body.new)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    await run_in_threadpool(sessions.end_user, a.user.id)
+    token = await run_in_threadpool(sessions.create, a.user.id)
+    resp = JSONResponse({"ok": True})
+    https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "") == "https"
+    resp.set_cookie(COOKIE, token, max_age=DAYS * 86400, httponly=True, samesite="lax", secure=https, path="/")
+    return resp
+
+
 # --- app devices -------------------------------------------------------------------
 
 
-def _check_channels(ids: list[str]) -> list[str]:
-    known = {c.id for c in store.config.channels}
-    bad = [i for i in ids if i not in known]
+def _check_channels(ids: list[str], a: Access) -> list[str]:
+    known = {c.id: c for c in store.config.channels}
+    bad = [i for i in ids if i not in known or not a.can_listen(known[i])]
     if bad:
         raise HTTPException(422, f"unknown channel: {', '.join(bad)}")
     return ids
 
 
-def _channels_of(dev: devmod.Device | None) -> list[dict]:
-    return [{"id": c.id, "name": c.name, "mount": c.mount}
-            for c in store.config.channels if dev is None or dev.may_use(c.id)]
+def _channels_of(a: Access) -> list[dict]:
+    return [{"id": c.id, "name": c.name, "mount": c.mount, "public": c.public, "can_edit": a.can_control(c)}
+            for c in store.config.channels if a.can_listen(c)]
+
+
+def _own_device(did: str):
+    """A device the caller may manage: any for the admin, else their own."""
+    a = acc()
+    dev = next((d for d in devices.list(None if a.admin else a.uid) if d.id == did), None)
+    if dev is None:
+        raise HTTPException(404, "unknown device")
+    return dev
 
 
 @app.get("/api/devices")
 async def list_devices():
-    """Paired apps and pairing codes still waiting to be scanned."""
+    """Paired apps and pairing codes still waiting to be scanned (a user's own only)."""
+    a = acc()
+    mine = None if a.admin else a.uid
     return {
-        "devices": [d.public() for d in await run_in_threadpool(devices.list)],
-        "pending": [{"code": p.code, "name": p.name, "role": p.role, "channels": p.channels, "expires": p.expires}
-                    for p in devices.pending()],
+        "devices": [d.public() for d in await run_in_threadpool(devices.list, mine)],
+        "pending": [{"code": p.code, "name": p.name, "role": p.role, "channels": p.channels, "expires": p.expires,
+                     "user_id": p.user_id}
+                    for p in devices.pending(mine)],
         "password_set": bool(UI_PASSWORD),
     }
 
@@ -1022,13 +1249,24 @@ class PairStart(BaseModel):
     role: str = "member"
     channels: list[str] = []
     server: str = ""  # the address the app should use; the UI sends its own origin
+    user: str = ""  # the admin may pair a device for a user (their id)
 
 
 @app.post("/api/devices/pair")
 async def start_pairing(body: PairStart, request: Request):
-    """A one-time code (valid 10 minutes) and a QR code for the app to scan."""
+    """A one-time code (valid 10 minutes) and a QR code for the app to scan.
+    A user's devices are always members that act as that user."""
+    a = acc()
+    owner = body.user if a.admin else a.uid
+    role = body.role if a.admin else "member"
+    owner_user = users.get(owner) if owner else None
+    if owner and owner_user is None:
+        raise HTTPException(422, "unknown user")
+    if role == "admin" and owner_user and not owner_user.admin:
+        raise HTTPException(422, "a user's device can't be an admin device")
+    check = Access(admin=owner_user.admin, user=owner_user) if owner_user else a
     try:
-        p = devices.start_pairing(body.name, body.role, _check_channels(body.channels))
+        p = devices.start_pairing(body.name, role, _check_channels(body.channels, check), owner)
     except ValueError as e:
         raise HTTPException(422, str(e))
     server = (body.server.strip() or str(request.base_url)).rstrip("/")
@@ -1039,7 +1277,9 @@ async def start_pairing(body: PairStart, request: Request):
 
 @app.delete("/api/devices/pair/{code}")
 async def cancel_pairing(code: str):
-    devices.cancel_pairing(code)
+    a = acc()
+    if a.admin or any(p.code == devices._norm(code) for p in devices.pending(a.uid)):
+        devices.cancel_pairing(code)
     return {"ok": True}
 
 
@@ -1051,9 +1291,15 @@ class DeviceEdit(BaseModel):
 
 @app.patch("/api/devices/{did}")
 async def edit_device(did: str, body: DeviceEdit):
+    a = acc()
+    old = _own_device(did)
+    owner = users.get(old.user_id) if old.user_id else None
+    if body.role == "admin" and (not a.admin or (owner and not owner.admin)):
+        raise HTTPException(422, "this device can't be an admin device")
+    check = Access(admin=owner.admin, user=owner) if owner else a
     try:
         dev = await run_in_threadpool(devices.update, did, body.name, body.role,
-                                      None if body.channels is None else _check_channels(body.channels))
+                                      None if body.channels is None else _check_channels(body.channels, check))
     except ValueError as e:
         raise HTTPException(422, str(e))
     if dev is None:
@@ -1064,6 +1310,7 @@ async def edit_device(did: str, body: DeviceEdit):
 @app.delete("/api/devices/{did}")
 async def remove_device(did: str):
     """Revoke a device: its key stops working at once."""
+    _own_device(did)
     if not await run_in_threadpool(devices.delete, did):
         raise HTTPException(404, "unknown device")
     return {"ok": True}
@@ -1072,6 +1319,11 @@ async def remove_device(did: str):
 class PairRedeem(BaseModel):
     code: str
     device_name: str = ""
+
+
+def device_access(dev) -> Access:
+    user = users.get(dev.user_id) if dev.user_id else None
+    return Access(admin=dev.role == "admin" and (user is None or user.admin), user=user, device=dev)
 
 
 @app.post("/api/pair")
@@ -1085,15 +1337,22 @@ async def pair(body: PairRedeem, request: Request):
     except LookupError as e:
         raise HTTPException(404, str(e))
     log.info("paired device %s (%s, %s)", dev.name, dev.id, dev.role)
+    chans = _channels_of(device_access(dev))
     return {"token": token, "device": dev.public(), "station_name": store.config.settings.station_name,
-            "channels": _channels_of(dev), "streams": {c["id"]: stream_urls(request, c["id"]) for c in _channels_of(dev)}}
+            "channels": chans, "streams": {c["id"]: stream_urls(request, c["id"]) for c in chans}}
 
 
 @app.get("/api/me")
 async def me(request: Request):
-    """Who is asking: the app's device (with its role and channels), or the web UI."""
-    dev = devmod.current.get()
+    """Who is asking: the app's device (with its role and channels), a user, or the admin.
+    `can_edit` on a channel says whether this person may change it."""
+    a = acc()
+    dev = a.device
+    role = dev.role if dev else ("admin" if a.admin else "user")
+    chans = _channels_of(a)
     return {"version": __version__, "api": API_VERSION,
-            "device": dev.public() if dev else None, "role": dev.role if dev else "admin", "login": bool(UI_PASSWORD),
+            "device": dev.public() if dev else None, "role": role, "login": bool(UI_PASSWORD),
+            "admin": a.admin, "user": {**a.user.public(), "folder": a.user.folder} if a.user else None,
+            "admin_name": UI_USER,
             "station_name": store.config.settings.station_name,
-            "channels": _channels_of(dev), "streams": {c["id"]: stream_urls(request, c["id"]) for c in _channels_of(dev)}}
+            "channels": chans, "streams": {c["id"]: stream_urls(request, c["id"]) for c in chans}}
