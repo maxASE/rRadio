@@ -99,9 +99,9 @@ rename or remove one under **Channel settings** on its page. A channel named "An
 at `/anna.mp3` (change the stream name if you like). The first channel keeps
 `/radio.mp3`, so existing links keep working.
 
-Video channels and podcasts are shared: by default every channel cuts them
-in. Untick a channel's checkbox on a source under **Sources** to leave it out
-there. Stations work the same way: tick a station for every channel that
+Which video channels and podcasts cut into which channel is decided by the
+ticks under **Sources**. When you add one, pick the channels it goes to (all of
+yours are ticked to start with); change the ticks any time later. Stations work the same way: tick a station for every channel that
 should be able to play it. A video that several channels follow is downloaded only once.
 
 Adding, renaming or removing a channel restarts the audio engine, so every
@@ -290,8 +290,8 @@ and gets their own part of rRadio:
   shows it to every other user under *Public channels* on Home. They can
   listen, see what is on and its schedule, but not change it, skip or cut in.
 - **Subscriptions.** Each user adds their own video channels and podcasts and
-  only sees and cuts in those; a new user starts with none. *Every source* on
-  a user's channel means every source of that user. The admin sees everyone's.
+  only sees and cuts in those; a new user starts with none. The admin sees
+  everyone's.
   Invidious and Navidrome are set up once by the admin and used by everyone.
 - **Own files.** A user's uploads go into `users/<name>/` in the media folder,
   and their spots can only play files from there.

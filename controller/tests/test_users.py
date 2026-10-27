@@ -126,10 +126,8 @@ def test_users_have_their_own_subscriptions(admin, app_main):
     pod = full.source("podcasts", f"pod{u['id']}")
     adm = full.source("video", f"adm{u['id']}")
     assert pod.owner == u["id"] and mine.wants(pod) and not mine.wants(adm)
-    # "Every source" on a user's channel means their own sources only; the admin's channels keep the admin's.
-    mine.all_sources = True
-    assert mine.wants(pod) and not mine.wants(adm)
-    assert full.channel("kid").wants(adm) and not full.channel("kid").wants(pod)
+    # A source added later is only cut in where it is ticked.
+    assert not full.channel("kid").wants(adm) and not full.channel("kid").wants(pod)
     # Other users don't see it, and can't change it.
     assert other.get("/api/config").json()["podcasts"] == []
     cfg = other.get("/api/config").json()
@@ -183,3 +181,16 @@ def test_user_reaches_member_features_on_own_channel(admin, app_main):
     assert c.get(f"/api/saved?channel={ch['id']}").status_code == 200
     assert c.get(f"/api/week/numbers?channel={ch['id']}").status_code == 200
     assert c.get("/api/saved?channel=kid").status_code == 403
+
+
+def test_every_source_becomes_ticks(app_main):
+    from app.config import Config
+
+    cfg = Config.model_validate({
+        "video": [{"id": "a1", "name": "A", "channel_id": "UCa"}, {"id": "u1", "name": "U", "channel_id": "UCu", "owner": "x"}],
+        "podcasts": [{"id": "p1", "name": "P", "url": "http://p.example/rss"}],
+        "channels": [{"id": "c", "name": "C", "all_sources": True}, {"id": "d", "name": "D", "owner": "x"}],
+    })
+    c, d = cfg.channels
+    assert not c.all_sources and c.sources == ["a1", "p1"]  # the owner's sources only
+    assert not d.all_sources and d.sources == ["u1"]

@@ -289,9 +289,10 @@ class Channel(BaseModel):
     """One radio stream of its own, e.g. one per family member.
 
     It plays at /<mount>.mp3 (and .aac/.opus), with its own stations,
-    programs and spots. It cuts in new items from every video channel and
-    podcast its owner added (the admin's or the user's own), or only from those
-    listed in `sources` when `all_sources` is off.
+    programs and spots. It cuts in new items from the video channels and
+    podcasts listed in `sources` (the ticks under Sources). `all_sources` is
+    from older configs: it is turned into a list of all the owner's sources
+    when the config loads.
 
     `owner` is the id of the user it belongs to ("" = the admin). A `public`
     channel shows up for every user, who can listen but not change it.
@@ -354,6 +355,16 @@ class Config(BaseModel):
             dup = {x for x in seen if seen.count(x) > 1}
             if dup:
                 raise ValueError(f"two channels use the same {'stream name' if attr == 'mount' else 'id'}: {', '.join(dup)}")
+        return self
+
+    @model_validator(mode="after")
+    def _explicit_sources(self) -> "Config":
+        """"Every source" became plain ticks: one place decides what cuts in."""
+        for c in self.channels:
+            if c.all_sources:
+                ids = [s.id for s in self.video + self.podcasts if s.owner == c.owner]
+                c.sources = list(dict.fromkeys([*c.sources, *ids]))
+                c.all_sources = False
         return self
 
     def channel(self, cid: str | None) -> Channel | None:
