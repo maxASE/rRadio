@@ -60,6 +60,7 @@
         <a href="#/home" class="back">← All channels</a>
         <span class="chips-nav" id="channel-chips"></span>
       </div>
+      <p class="readonly-note readonly-only" data-readonly-note></p>
       <div class="split">
         <div class="split-main">
           <div class="card onair">
@@ -74,7 +75,7 @@
             </div>
             <div class="progress hidden" id="np-progress"><div id="np-bar"></div></div>
             <div class="np-times hidden" id="np-times"><span id="np-elapsed"></span><span id="np-duration"></span></div>
-            <div class="row gap">
+            <div class="row gap edit-only">
               <button id="btn-skip" class="hidden">Skip clip</button>
               <button id="btn-skip-song" class="hidden">Next song</button>
             </div>
@@ -98,7 +99,7 @@
         </div>
 
         <aside class="split-side">
-          <form id="form-play-url" class="card stack">
+          <form id="form-play-url" class="card stack edit-only">
             <h3>Cut in now</h3>
             <label class="field">Video link or audio URL
               <input name="url" placeholder="https://…" required>
@@ -106,7 +107,7 @@
             <button>Play on <span data-channel-name></span></button>
           </form>
 
-          <div class="card stack" id="voice-card">
+          <div class="card stack edit-only" id="voice-card">
             <h3>Voice message</h3>
             <p class="small muted" id="voice-hint">Record a message; it cuts in like an announcement and is deleted after playing.</p>
             <div class="row gap">
@@ -139,7 +140,7 @@
             <p class="muted small" id="listeners"></p>
           </div>
 
-          <details class="card">
+          <details class="card edit-only">
             <summary><h3>Channel settings</h3></summary>
             <div class="stack" id="channel-settings"></div>
           </details>
@@ -154,11 +155,12 @@
           <h2 class="page-title">Schedule</h2>
           <span class="chips-nav" id="schedule-chips"></span>
         </div>
-        <div class="row gap">
+        <div class="row gap edit-only">
           <button id="btn-new-spot">+ Spot</button>
           <button id="btn-new-program" class="primary">+ Program</button>
         </div>
       </div>
+      <p class="readonly-note readonly-only" data-readonly-note></p>
       <div class="legend">
         <span><i class="sw prog"></i>Program, fixed time</span>
         <span><i class="sw title"></i>Program started by the stream title (may end earlier)</span>
@@ -168,7 +170,7 @@
       </div>
       <div class="card timeline-box"><div class="timeline" id="timeline"></div></div>
 
-      <form class="card add-card hidden" id="form-program">
+      <form class="card add-card hidden edit-only" id="form-program">
         <h3>New program</h3>
         <p class="muted small">Another stream or Navidrome playlist that takes over during a weekly time window. If a clip is already playing when the window opens, the clip finishes first.</p>
         <div class="row gap">
@@ -189,7 +191,7 @@
         <ul class="list" id="programs"></ul>
       </div>
 
-      <div class="card hidden" id="spot-card">
+      <div class="card hidden edit-only" id="spot-card">
         <h3 id="spot-form-title">New spot</h3>
         <form id="form-spot" class="spot-form">
           <label>Name <input name="name" required placeholder="e.g. Hourly news, Station ID, Pizza ad"></label>
@@ -246,6 +248,7 @@
         <div>
           <h2 class="page-title">Sources</h2>
           <p class="muted">Everything rRadio can play, in one list. Tick the channels each source feeds.</p>
+          <p class="muted small user-only">You see your own channels here. Video channels and podcasts are shared by everyone; only whoever added one can change or remove it.</p>
         </div>
         <button id="btn-add-source" class="primary">+ Add source</button>
       </div>
@@ -280,7 +283,7 @@
           <div class="row gap"><input name="url" class="grow" placeholder="RSS feed URL" type="url" required><button class="primary">Add podcast</button></div>
         </form>
         <form id="form-upload" data-add="media" class="stack hidden">
-          <p class="muted small">Jingles, station IDs, ads and announcements, shared by all channels. Use them in spots, or play one right away.</p>
+          <p class="muted small">Jingles, station IDs, ads and announcements, shared by all channels. Use them in spots, or play one right away.<span class="user-only"> Your files go into your own folder, which only you see.</span></p>
           <div class="row gap">
             <input type="file" name="file" accept="audio/*,.mp3,.m4a,.ogg,.opus,.flac,.wav" multiple required>
             <input name="folder" placeholder="Folder (optional, e.g. ads)" list="folder-list">
@@ -303,13 +306,37 @@
       <div class="card hidden" id="media-card">
         <h3>Own media</h3>
         <ul class="list" id="media"></ul>
-        <p class="small muted">Drop folder: any audio file put into <code>inbox/</code> in the media folder plays once on the first channel, or on a channel by its stream name in <code>inbox/&lt;stream name&gt;/</code>, and then moves to <code>played/</code>. Handy for Home Assistant announcements. See the README for mapping the media folder to a folder on your server.</p>
+        <p class="small muted admin-only">Drop folder: any audio file put into <code>inbox/</code> in the media folder plays once on the first channel, or on a channel by its stream name in <code>inbox/&lt;stream name&gt;/</code>, and then moves to <code>played/</code>. Handy for Home Assistant announcements. See the README for mapping the media folder to a folder on your server.</p>
       </div>
     </section>
 
     <!-- SETTINGS -->
     <section id="view-settings" class="view">
-      <div class="card">
+      <div class="card user-only" id="account-card">
+        <h2>Your account</h2>
+        <p class="muted">Logged in as <strong data-user-name></strong>. You can make channels of your own; switch one to public under its Channel settings so everyone else can listen to it too.</p>
+        <form id="form-password" class="stack">
+          <label class="field">Current password <input name="old" type="password" autocomplete="current-password" required></label>
+          <label class="field">New password <input name="new" type="password" autocomplete="new-password" minlength="8" required></label>
+          <div><button class="primary">Change password</button></div>
+        </form>
+      </div>
+      <div class="card admin-only" id="users-card">
+        <h2>Users</h2>
+        <p class="muted">Everyone with a login can make their own channels, with their own stations, programs, spots and files. A channel they switch to public shows up for everyone else to listen to, but only its owner (and you) can change it.</p>
+        <p class="small warn-text" id="users-warning" hidden>No <code>UI_PASSWORD</code> is set, so there is no login and everyone is the admin. Set one in <code>.env</code> to use user accounts.</p>
+        <div id="users-list" class="stack"></div>
+        <form id="form-user" class="row gap">
+          <input name="name" placeholder="User name, e.g. anna" pattern="[a-z0-9][a-z0-9._\-]{0,31}" required autocomplete="off">
+          <input name="password" type="password" placeholder="Password (8+ characters)" minlength="8" required autocomplete="new-password">
+          <select name="role" aria-label="Role">
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button class="primary">Add user</button>
+        </form>
+      </div>
+      <div class="card admin-only">
         <h2>Settings</h2>
         <form id="form-settings" class="settings">
           <label>Station name <input name="station_name"></label>
@@ -358,11 +385,14 @@
       </div>
       <div class="card" id="devices-card">
         <h2>Apps and devices</h2>
-        <p class="muted">Pair the rRadio app by scanning a QR code. Each phone gets its own key, which you can limit to some channels or remove at any time.</p>
+        <p class="muted">Pair the rRadio app by scanning a QR code. Each phone gets its own key, which you can limit to some channels or remove at any time.<span class="user-only"> The app can control your own channels and listen to public ones.</span></p>
         <p class="small warn-text" id="devices-warning" hidden>No <code>UI_PASSWORD</code> is set, so anyone on your network can still use rRadio without a key. Set one in <code>.env</code> to make device limits count.</p>
         <form id="form-pair" class="stack">
           <label class="field">Name <input name="name" placeholder="e.g. Max's phone"></label>
-          <label class="field">Can do
+          <label class="field admin-only">For
+            <select name="user"></select>
+          </label>
+          <label class="field admin-only" data-pair-role>Can do
             <select name="role">
               <option value="member">Listen and control its channels</option>
               <option value="admin">Everything, including settings</option>
@@ -388,13 +418,14 @@
         <div id="devices-list" class="stack"></div>
       </div>
       <div class="card">
-        <h2>Backup, export and import</h2>
-        <p class="muted">Everything here is stored in <code>config.yaml</code> in the data volume. You can edit it by hand; changes are picked up automatically.</p>
-        <div class="row gap">
+        <h2><span class="admin-only">Backup, export and import</span><span class="user-only">Import a channel</span></h2>
+        <p class="muted admin-only">Everything here is stored in <code>config.yaml</code> in the data volume. You can edit it by hand; changes are picked up automatically.</p>
+        <p class="muted user-only">Import a channel someone exported with <em>Export channel</em>. It becomes one of your channels.</p>
+        <div class="row gap admin-only">
           <a href="/api/config.yaml" class="button">Download config.yaml</a>
           <a href="/api/backup" class="button">Download full backup</a>
         </div>
-        <p class="muted small">The full backup is a zip with the config, your own audio and uploaded pictures. To move one channel, use <em>Export channel</em> on its page instead. Neither includes the Navidrome password, history or downloaded clips.</p>
+        <p class="muted small admin-only">The full backup is a zip with the config, your own audio and uploaded pictures. To move one channel, use <em>Export channel</em> on its page instead. Neither includes the Navidrome password, history or downloaded clips.</p>
         <form id="form-import" class="stack">
           <label class="field">Import a channel export or a full backup <input name="file" type="file" accept=".zip,application/zip" required></label>
           <label class="field">Name for the imported channel <input name="name" placeholder="optional; keeps the exported name"></label>

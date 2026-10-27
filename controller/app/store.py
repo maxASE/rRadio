@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .devices import Devices
 from .sessions import Sessions
+from .users import Users
 
 DB_PATH = Path(os.environ.get("STATE_DB", "/data/state.db"))
 
@@ -69,6 +70,7 @@ class Store:
                 self._db.execute("ALTER TABLE history ADD COLUMN replay TEXT NOT NULL DEFAULT ''")
         self.devices = Devices(self._db, self._lock)
         self.sessions = Sessions(self._db, self._lock)
+        self.users = Users(self._db, self._lock, os.environ.get("UI_USERNAME", "admin"))
 
     def has_any(self, source: str) -> bool:
         with self._lock:
