@@ -79,13 +79,13 @@ MEMBER_ROUTES = {
 # the user's own channels, sources, files and devices (or public channels to listen).
 USER_ROUTES = {
     "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio|now/audio|navidrome/playlists|week"
-                      r"|config|media|devices|channels/[^/]+/export|spots/[^/]+/info)"),
+                      r"|saved|search|week/numbers|config|media|devices|channels/[^/]+/export|spots/[^/]+/info)"),
     "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire"
-                       r"|history/\d+/play-next|quiet|media|images|video/resolve|station/logo|podcast/resolve|feeds/check"
+                       r"|history/\d+/(play-next|save)|quiet|queue/order|media|images|video/resolve|station/logo|podcast/resolve|feeds/check"
                        r"|programs/title-check|check|devices/pair|import|me/password|logout)"),
     "PUT": re.compile(r"/api/config"),
     "PATCH": re.compile(r"/api/devices/[^/]+"),
-    "DELETE": re.compile(r"/api/(queue/.+|history/\d+/replay|media/.+|devices/pair/.+|devices/[^/]+)"),
+    "DELETE": re.compile(r"/api/(queue/.+|history/\d+/(replay|save)|media/.+|devices/pair/.+|devices/[^/]+)"),
 }
 
 
@@ -967,9 +967,8 @@ def _own_entry(entry_id: int) -> dict:
     entry = state.entry(entry_id)
     if not entry:
         raise HTTPException(404, "no such history entry")
-    dev = restricted()
-    if dev and entry["channel"] and not dev.may_use(entry["channel"]):
-        raise HTTPException(403, "this device may not use that channel")
+    if entry["channel"]:
+        channel_or_404(entry["channel"])
     return entry
 
 

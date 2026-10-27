@@ -159,3 +159,11 @@ def test_password_change(admin, app_main):
     fresh = TestClient(app_main.app)
     assert fresh.post("/api/login", json={"username": u["name"], "password": pw}).status_code == 401
     assert fresh.post("/api/login", json={"username": u["name"], "password": "another-pw"}).status_code == 200
+
+
+def test_user_reaches_member_features_on_own_channel(admin, app_main):
+    u, c = make_user(admin, app_main)
+    ch = add_channel(c, "Saved", f"saved-{u['name']}")
+    assert c.get(f"/api/saved?channel={ch['id']}").status_code == 200
+    assert c.get(f"/api/week/numbers?channel={ch['id']}").status_code == 200
+    assert c.get("/api/saved?channel=kid").status_code == 403
