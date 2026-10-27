@@ -183,7 +183,11 @@ def import_channel(cfg: Config, z: zipfile.ZipFile, name: str = "", owner: str =
         for x in ch.get(key) or []:
             ids[x.get("id")] = x["id"] = new_id()
     ch["current_station"] = ids.get(ch.get("current_station"))
-    ch["sources"] = [remap.get(s, s) for s in ch.get("sources") or []]
+    if ch.get("all_sources", True):  # older exports: every source that came with it
+        ch["sources"] = [remap.get(s.get("id"), s.get("id")) for key in ("video", "podcasts") for s in doc.get(key) or []]
+    else:
+        ch["sources"] = [remap.get(s, s) for s in ch.get("sources") or []]
+    ch["all_sources"] = False
 
     Config.model_validate({**data, "channels": [*data["channels"], ch]})  # fail before writing files
     # Own audio keeps its paths, unless a file there differs: then the whole

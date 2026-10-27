@@ -569,7 +569,7 @@ $("#form-channel").addEventListener("submit", (ev) => {
     name: f.name.value,
     mount: f.mount.value.trim().toLowerCase(),
     stations: first ? first.stations.map(({ id, ...s }) => s) : [],
-    programs: [], spots: [], all_sources: true, sources: [],
+    programs: [], spots: [], all_sources: false, sources: [],
   });
   f.reset();
   f.classList.add("hidden");
@@ -803,13 +803,7 @@ function renderChannelSettings() {
     el("label", { class: "check small" },
       el("input", { type: "checkbox", checked: !!c.public, onchange: (e) => { c.public = e.target.checked; saveConfig(c.public ? `${c.name} is public now` : `${c.name} is private now`); } }),
       "Public: other users can listen, but not change it"),
-    el("label", { class: "check small" },
-      el("input", { type: "checkbox", checked: c.all_sources, onchange: (e) => {
-        c.all_sources = e.target.checked;
-        if (!c.all_sources && !c.sources.length) c.sources = [...cfg.video, ...cfg.podcasts].map((s) => s.id);
-        saveConfig();
-      } }),
-      "Cut in all my video channels and podcasts, also new ones"),
+    el("p", { class: "muted small" }, "Which video channels and podcasts cut in here: tick them under ", el("a", { href: "#/sources/all" }, "Sources"), "."),
     el("div", { class: "row gap" },
       el("a", { class: "button", href: `/api/channels/${encodeURIComponent(c.id)}/export`, title: "A zip with this channel's stations, programs, spots, sources, own audio and pictures, for Settings › Import on another rRadio" }, "Export channel"),
       el("button", {
@@ -1493,12 +1487,7 @@ function setUses(c, row, on) {
     }
     return saveConfig(on ? `${row.name} added to ${c.name}` : `${row.name} removed from ${c.name}`);
   }
-  if (c.all_sources) {
-    c.all_sources = false;
-    c.sources = row.allIds.filter((x) => x !== row.src.id);
-  } else {
-    c.sources = on ? [...new Set([...c.sources, row.src.id])] : c.sources.filter((x) => x !== row.src.id);
-  }
+  c.sources = on ? [...new Set([...c.sources, row.src.id])] : c.sources.filter((x) => x !== row.src.id);
   return saveConfig(on ? `${c.name} now cuts in ${row.name}` : `${c.name} no longer cuts in ${row.name}`);
 }
 
@@ -1661,10 +1650,15 @@ function showAddKind(k) {
   $("[data-shuffle]", f).classList.toggle("hidden", !nd);
   $$("[data-hint]", f).forEach((p) => p.classList.toggle("hidden", p.dataset.hint !== k));
   if (nd) fillPlaylists(f.playlist);
-  $(".chips", f).replaceChildren(
-    el("span", { class: "muted small" }, "Add to:"),
-    ...mine().map((c) => el("label", {}, el("input", { type: "checkbox", value: c.id, checked: c.id === channel()?.id }), c.name)),
-  );
+  // Stations go to the channel being looked at; new video channels and podcasts to all of them.
+  const form = $(`#add-source form:not(.hidden)`);
+  const ticks = form && $("[data-channel-ticks]", form);
+  if (ticks) {
+    ticks.replaceChildren(
+      el("span", { class: "muted small" }, k === "video" || k === "podcast" ? "Cut into:" : "Add to:"),
+      ...mine().map((c) => el("label", {}, el("input", { type: "checkbox", value: c.id, checked: k === "video" || k === "podcast" || c.id === channel()?.id }), c.name)),
+    );
+  }
 }
 $$("#add-kind button").forEach((b) => b.addEventListener("click", () => showAddKind(b.dataset.kind)));
 $("#btn-add-source").addEventListener("click", () => {
@@ -1752,6 +1746,19 @@ $("#form-station").addEventListener("submit", async (ev) => {
   saveConfig(image ? "Station added, with its logo" : "Station added");
 });
 
+// A new video channel or podcast, ticked on the channels picked in its add form.
+function tickInto(form, src) {
+  src.id = Math.random().toString(16).slice(2, 10).padEnd(8, "0");
+  const targets = $$("[data-channel-ticks] input:checked", form).map((i) => i.value);
+  const names = [];
+  for (const c of cfg.channels) {
+    if (!targets.includes(c.id)) continue;
+    c.sources = [...c.sources, src.id];
+    names.push(c.name);
+  }
+  return { src, msg: names.length ? `Added ${src.name}. It cuts into ${names.join(", ")}.` : `Added ${src.name}. Tick the channels it should cut into.` };
+}
+
 $("#form-video").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const f = ev.target;
@@ -1760,9 +1767,10 @@ $("#form-video").addEventListener("submit", async (ev) => {
   try {
     const ch = await api("/api/video/resolve", { method: "POST", body: { query: f.query.value } });
     if (cfg.video.some((c) => c.channel_id === ch.channel_id)) throw new Error(`${ch.name} is already in the list`);
-    cfg.video.push({ name: ch.name, channel_id: ch.channel_id, enabled: true });
-    f.reset();
-    await saveConfig(`Added ${ch.name}. Tick the channels it should cut into.`);
+    const into = tickInto(f, { name: ch.name, channel_id: ch.channel_id, enabled: true });
+    cfg.video.push(into.src);
+    f.query.value = "";
+    await saveConfig(into.msg);
   } catch (e) { toast(e.message, true); }
   btn.disabled = false;
 });
@@ -1774,9 +1782,10 @@ $("#form-podcast").addEventListener("submit", async (ev) => {
   btn.disabled = true;
   try {
     const { name } = await api("/api/podcast/resolve", { method: "POST", body: { query: f.url.value } });
-    cfg.podcasts.push({ name: name || f.url.value, url: f.url.value, enabled: true });
-    f.reset();
-    await saveConfig(`Added ${name || "podcast"}. Tick the channels it should cut into.`);
+    const into = tickInto(f, { name: name || f.url.value, url: f.url.value, enabled: true });
+    cfg.podcasts.push(into.src);
+    f.url.value = "";
+    await saveConfig(into.msg);
   } catch (e) { toast(`Couldn't read that feed: ${e.message}`, true); }
   btn.disabled = false;
 });

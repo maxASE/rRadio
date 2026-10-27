@@ -277,10 +277,12 @@
         <form id="form-video" data-add="video" class="stack hidden">
           <p class="muted small">New uploads are fetched through your Invidious instance and cut into the radio as audio. Videos that already exist when you add a channel are ignored.</p>
           <div class="row gap"><input name="query" class="grow" placeholder="@handle, channel URL, channel ID or search term" required><button class="primary">Find &amp; add</button></div>
+          <div class="chips" data-channel-ticks></div>
         </form>
         <form id="form-podcast" data-add="podcast" class="stack hidden">
           <p class="muted small">New episodes from this RSS feed are cut into the radio. Episodes that already exist when you add it are ignored.</p>
           <div class="row gap"><input name="url" class="grow" placeholder="RSS feed URL" type="url" required><button class="primary">Add podcast</button></div>
+          <div class="chips" data-channel-ticks></div>
         </form>
         <form id="form-upload" data-add="media" class="stack hidden">
           <p class="muted small">Jingles, station IDs, ads and announcements, shared by all channels. Use them in spots, or play one right away.<span class="user-only"> Your files go into your own folder, which only you see.</span></p>
