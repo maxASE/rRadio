@@ -321,3 +321,70 @@ def test_the_clip_on_air_can_be_listened_back(admin, app_main, monkeypatch):
     finally:
         eng.items.remove(it)
     assert admin.get(f"/api/now/audio?channel={cid}").status_code == 410
+
+
+def test_saved_for_later_keeps_the_file_on_disk(admin, app_main, ram_dir):
+    import time
+
+    from app.engine import SAVED_DIR
+
+    folder = ram_dir / "replay"
+    folder.mkdir(exist_ok=True)
+    clip = folder / "voice-later.m4a"
+    clip.write_bytes(b"voice")
+    app_main.state.add_history("voice", "Dad", "Save me", "played", channel="kid",
+                               replay={"path": str(clip), "until": time.time() + 60})
+    entry = next(h for h in admin.get("/api/status", params={"channel": "kid"}).json()["history"] if h["title"] == "Save me")
+    assert entry["saved"] is None
+    assert admin.post(f"/api/history/{entry['id']}/save").status_code == 200
+    saved = admin.get("/api/saved", params={"channel": "kid"}).json()
+    assert saved[0]["id"] == entry["id"] and saved[0]["saved"]
+    _, info = app_main.state.replay_of(entry["id"])
+    kept = Path(info["path"])
+    assert kept.parent == SAVED_DIR and kept.read_bytes() == b"voice" and "until" not in info
+    assert admin.get("/api/saved", params={"channel": app_main.store.config.channels[0].id}).json() == []
+    # Taken back: the saved copy goes, and with it the only audio of a voice message.
+    assert admin.delete(f"/api/history/{entry['id']}/save").status_code == 200
+    assert not kept.exists()
+    assert admin.get("/api/saved", params={"channel": "kid"}).json() == []
+
+
+def test_a_clip_from_its_source_can_be_saved_and_searched(admin, app_main):
+    app_main.state.add_history("video", "Bundestag", "Rede zum Haushalt", "played", channel="kid",
+                               replay={"media": "abc123", "duration": 600})
+    app_main.state.add_history("video", "Other", "Something else", "played", channel="kid", replay={"media": "x"})
+    found = admin.get("/api/search", params={"channel": "kid", "q": "haushalt"}).json()
+    assert [h["title"] for h in found["history"]] == ["Rede zum Haushalt"]
+    assert found["videos"] == []  # Videos only when asked
+    entry = found["history"][0]
+    assert admin.post(f"/api/history/{entry['id']}/save").status_code == 200
+    assert app_main.state.entry(entry["id"])["replay"] == {"media": "abc123", "duration": 600}
+    assert admin.get("/api/search", params={"channel": "kid", "q": "50%"}).json()["history"] == []
+    assert admin.get("/api/search", params={"channel": "kid", "q": "h"}).json()["history"] == []
+    admin.delete(f"/api/history/{entry['id']}/save")
+    assert app_main.state.entry(entry["id"])["replay"] == {"media": "abc123", "duration": 600}
+
+
+def test_up_next_can_be_reordered(admin, app_main):
+    from app.sources import Item
+
+    eng = app_main.engine
+    items = [Item(kind="video", source_id="vid", source_name="S", item_id=f"r{n}", title=f"R{n}",
+                  media="m", channel="kid", state="ready", arrived=100.0 + n) for n in range(3)]
+    eng.items.extend(items)
+    try:
+        r = admin.post("/api/queue/order", json={"channel": "kid", "keys": [items[2].uid, items[0].uid, items[1].uid, "nope"]})
+        assert r.json() == {"ok": True, "moved": 3}
+        queue = [q["title"] for q in admin.get("/api/status", params={"channel": "kid"}).json()["queue"] if q["title"].startswith("R")]
+        assert queue == ["R2", "R0", "R1"]
+    finally:
+        for it in items:
+            eng.items.remove(it)
+
+
+def test_week_numbers_count_what_played(admin, app_main):
+    app_main.state.add_history("spot", "Ekot", "Ekot 07:00", "played", channel="kid", replay={"media": "e", "duration": 120})
+    nums = admin.get("/api/week/numbers", params={"channel": "kid"}).json()
+    assert len(nums["days"]) == 7 and nums["days"][-1]["date"] == nums["today"]
+    assert nums["totals"]["news"] >= 1 and nums["days"][-1]["news"] >= 1
+    assert any(t["name"] == "Ekot" for t in nums["top"])

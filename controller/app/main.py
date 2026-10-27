@@ -30,7 +30,7 @@ from . import devices as devmod
 from . import media, transfer
 from .art import find_station_logo, image_file, save_image
 from .config import SECRET_MASK, Config, ConfigStore, Podcast, Station, dump
-from .engine import Engine, short_error
+from .engine import SAVED_DIR, Engine, short_error
 from .liq import Liquidsoap
 from .navidrome import Navidrome
 from .sources import USER_AGENT, Invidious, Item, cache_dir, feed_title, podcast_latest, video_id_from_url
@@ -68,9 +68,9 @@ app = FastAPI(title="rRadio", version=__version__, lifespan=lifespan, docs_url="
 
 # What a "member" device may call; everything else needs an admin device or the UI password.
 MEMBER_ROUTES = {
-    "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio|now/audio|navidrome/playlists|week)"),
-    "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire|history/\d+/play-next|quiet)"),
-    "DELETE": re.compile(r"/api/(queue/.+|history/\d+/replay)"),
+    "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio|now/audio|navidrome/playlists|week|saved|search|week/numbers)"),
+    "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire|history/\d+/(play-next|save)|quiet|queue/order)"),
+    "DELETE": re.compile(r"/api/(queue/.+|history/\d+/(replay|save))"),
 }
 
 
@@ -847,12 +847,94 @@ async def history_forget(entry_id: int):
     if dev and channel and not dev.may_use(channel):
         raise HTTPException(403, "this device may not use that channel")
     path = Path(info.get("path") or "")
-    if path.parent.name != "replay":  # own media files are not ours to delete
+    if path.parent.name != "replay" and path.parent != SAVED_DIR:  # own media files are not ours to delete
         raise HTTPException(409, "nothing is stored for this; it is fetched again from its source")
     engine.drop_recording(str(path))
     path.unlink(missing_ok=True)
     state.set_replay(entry_id, None)
+    state.set_saved(entry_id, False)
     return {"ok": True}
+
+
+def _own_entry(entry_id: int) -> dict:
+    entry = state.entry(entry_id)
+    if not entry:
+        raise HTTPException(404, "no such history entry")
+    dev = restricted()
+    if dev and entry["channel"] and not dev.may_use(entry["channel"]):
+        raise HTTPException(403, "this device may not use that channel")
+    return entry
+
+
+@app.post("/api/history/{entry_id}/save")
+async def history_save(entry_id: int):
+    """Saved for later: the entry stays in the channel's Saved list, past the week and
+    the 500 entries the history keeps. A recording or voice message is copied to disk."""
+    entry = _own_entry(entry_id)
+    if not entry["replay"]:
+        raise HTTPException(409, "this can no longer be played again, so it can't be saved")
+    state.set_saved(entry_id, True)
+    await run_in_threadpool(engine.persist_saved)
+    return {"ok": True}
+
+
+@app.delete("/api/history/{entry_id}/save")
+async def history_unsave(entry_id: int):
+    _own_entry(entry_id)
+    await run_in_threadpool(engine.unsave, entry_id)
+    return {"ok": True}
+
+
+@app.get("/api/saved")
+async def saved(channel: str | None = None):
+    """The channel's entries saved for later, the last saved first."""
+    ch = channel_or_404(channel)
+    return [{**e, "art": engine.art.path(e["art"])} for e in state.saved(ch.id)]
+
+
+@app.get("/api/search")
+async def search(q: str, channel: str | None = None, video: bool = False):
+    """Searches what played on the channel (and what is saved), its stations, spots and
+    sources, and with `video` also videos through Invidious."""
+    ch = channel_or_404(channel)
+    text = q.strip()
+    if len(text) < 2:
+        return {"history": [], "sources": [], "videos": []}
+    low = text.lower()
+    cfg = store.config
+    sources = [{"kind": "station", "id": s.id, "name": s.name} for s in ch.stations if low in s.name.lower()]
+    sources += [{"kind": "spot", "id": s.id, "name": s.name} for s in ch.spots if low in s.name.lower()]
+    allowed = None if ch.all_sources else set(ch.sources)
+    sources += [{"kind": kind, "id": s.id, "name": s.name}
+                for kind, items in (("video", cfg.video), ("podcasts", cfg.podcasts))
+                for s in items if low in s.name.lower() and (allowed is None or s.id in allowed)]
+    found = {"history": [{**e, "art": engine.art.path(e["art"])} for e in state.search(ch.id, text)],
+             "sources": sources, "videos": []}
+    if video and cfg.settings.invidious_url:
+        try:
+            videos = await engine.invidious().search_videos(text)
+            found["videos"] = [{**v, "art": engine.art.path(v["art"])} for v in videos]
+        except Exception as e:
+            found["video_error"] = f"{type(e).__name__}: {e}"
+    return found
+
+
+@app.get("/api/week/numbers")
+async def week_numbers(channel: str | None = None, days: int = 7):
+    """What the channel played over the last days: per day, in all, and the most played."""
+    return engine.week_numbers(channel_or_404(channel).id, max(1, min(days, 31)))
+
+
+class QueueOrder(BaseModel):
+    channel: str | None = None
+    keys: list[str]
+
+
+@app.post("/api/queue/order")
+async def queue_order(body: QueueOrder):
+    """"Up next": puts the channel's waiting clips in this order."""
+    ch = channel_or_404(body.channel)
+    return {"ok": True, "moved": engine.reorder(ch.id, body.keys)}
 
 
 @app.get("/api/spots/{spot_id}/info")

@@ -378,6 +378,27 @@ can seek). It comes from the clip's source again (iPhones can't play the
 radio's WebM/Opus copy); voice messages and own media are served from their
 file. Once that clip is over the answer is 410.
 
+**Saved for later.** `POST /api/history/<id>/save` keeps an entry in the
+channel's `GET /api/saved?channel=<id>` list (the last saved first) past the
+week and the 500 entries the history holds; `DELETE` on the same path takes it
+back. A recorded program or voice message is copied to `/data/saved` (on disk,
+`SAVED_DIR`) so it outlives the day and a restart; a program saved while still
+on air is copied when it ends. Clips fetched again from their source are only
+marked. History entries carry `saved` (when, or null).
+
+**Search.** `GET /api/search?channel=<id>&q=<text>` finds entries of the
+channel's history by title or source, plus its stations, spots and the video
+channels and podcasts it plays; with `&video=true` also videos through
+Invidious (`videos`, each with a `url` for `POST /api/play-url`).
+
+**Up next.** `POST /api/queue/order` with `{"channel": "<id>", "keys": [...]}`
+puts the channel's waiting clips in that order. The clip already handed to the
+radio stays first.
+
+**Your week.** `GET /api/week/numbers?channel=<id>` counts what the channel
+played over the last 7 days (`days=` up to 31): clips, news and program minutes
+per day, totals, and the most played sources.
+
 **Listen again.** The apps can play a clip from the history again, on the phone
 only, with `GET /api/history/<id>/audio` (the `id` and `replay` fields of the
 `history` entries in `/api/status`), or put it back on the radio with

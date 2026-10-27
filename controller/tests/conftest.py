@@ -18,6 +18,7 @@ os.environ.update(
     MEDIA_DIR=str(DATA / "media"),
     CACHE_DIR=str(DATA / "cache"),
     RAM_CACHE_DIR=str(DATA / "ram"),
+    SAVED_DIR=str(DATA / "saved"),
     UI_USERNAME="admin",
     UI_PASSWORD="secret-pw",
 )

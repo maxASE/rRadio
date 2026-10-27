@@ -51,6 +51,7 @@ log = logging.getLogger("engine")
 
 ICECAST_STATUS_URL = os.environ.get("ICECAST_STATUS_URL", "http://icecast:8000/status-json.xsl")
 CHANNELS_FILE = Path(os.environ.get("CHANNELS_FILE", "/data/channels.json"))
+SAVED_DIR = Path(os.environ.get("SAVED_DIR", "/data/saved"))  # recordings saved for later, on disk
 TICK = 1.0
 INIT_MARK = "__init__"
 HOLD_MAX = 600  # a spot waits at most this long for a song change
@@ -391,6 +392,98 @@ class Engine:
                 self._finish(it, "removed")
                 return True
         return False
+
+    def reorder(self, cid: str, keys: list[str]) -> int:
+        """Puts the channel's waiting clips named in `keys` in that order ("Up next" in the
+        apps). They swap places among themselves; the clip already handed to the radio and
+        clips not named stay where they are. Answers how many moved."""
+        mine = {i.uid: i for i in self.items if i.channel == cid and i.state in ("waiting", "downloading", "ready")}
+        picked = [mine[k] for k in dict.fromkeys(keys) if k in mine]
+        if not picked:
+            return 0
+        # The order is (-priority, arrived): hand the slots out again in the new order.
+        slots = sorted(((i.priority, i.arrived) for i in picked), key=lambda s: (-s[0], s[1]))
+        for it, (priority, arrived) in zip(picked, slots):
+            it.priority, it.arrived = priority, arrived
+        self._note_changes()
+        return len(picked)
+
+    def persist_saved(self) -> None:
+        """Moves the files of entries saved for later out of the replay folder (emptied after
+        a day, and with the container when it is in RAM) to SAVED_DIR. A program still being
+        recorded waits until it is over."""
+        recording = {cs.recording.get_name() for cs in self.channels.values() if cs.recording}
+        for entry_id, info in self.store.saved_replays():
+            path = Path(info.get("path", ""))
+            if not path.is_file() or path.parent == SAVED_DIR or MEDIA_DIR in path.parents or str(path) in recording:
+                continue
+            try:
+                SAVED_DIR.mkdir(parents=True, exist_ok=True)
+                target = SAVED_DIR / f"{entry_id}-{path.name}"
+                shutil.copyfile(path, target)
+            except OSError as e:
+                log.warning("Could not save %s for later: %s", path, e)
+                continue
+            info = {k: v for k, v in info.items() if k != "until"}
+            self.store.set_replay(entry_id, {**info, "path": str(target)})
+            log.info("Saved %s for later as %s", path.name, target)
+
+    def unsave(self, entry_id: int) -> None:
+        """No longer saved: its saved copy goes; a clip fetched again from its source stays."""
+        self.store.set_saved(entry_id, False)
+        found = self.store.replay_of(entry_id)
+        if found and Path(found[1].get("path", "")).parent == SAVED_DIR:
+            Path(found[1]["path"]).unlink(missing_ok=True)
+            self.store.set_replay(entry_id, None)
+
+    def week_numbers(self, cid: str, days: int = 7) -> dict:
+        """What the channel played over the last `days` days, for "Your week" in the apps."""
+        now = self.now()
+        first = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        entries = self.store.between(cid, first.timestamp(), time.time())
+        per_day = {(first + timedelta(days=n)).date().isoformat(): {"clips": 0, "news": 0, "program_minutes": 0}
+                   for n in range(days)}
+        sources: dict[tuple[str, str], dict] = {}
+        totals = {"clips": 0, "news": 0, "voice": 0, "program_minutes": 0, "clip_minutes": 0}
+        started: dict[str, float] = {}
+        tz = now.tzinfo
+        for e in entries:
+            day = per_day.get(datetime.fromtimestamp(e["ts"], tz).date().isoformat())
+            if e["kind"] == "program":
+                if e["status"] == "started":
+                    started[e["title"]] = e["ts"]
+                elif e["status"] == "ended" and e["title"] in started:
+                    minutes = round((e["ts"] - started.pop(e["title"])) / 60)
+                    totals["program_minutes"] += minutes
+                    if day:
+                        day["program_minutes"] += minutes
+                    src = sources.setdefault(("program", e["title"]), {"kind": "program", "name": e["title"], "count": 0, "minutes": 0})
+                    src["count"] += 1
+                    src["minutes"] += minutes
+                continue
+            if e["status"] != "played":
+                continue
+            news = e["kind"] == "spot"
+            totals["news" if news else "clips"] += 1
+            if e["kind"] == "voice":
+                totals["voice"] += 1
+            minutes = (e["duration"] or 0) / 60
+            totals["clip_minutes"] += round(minutes)
+            if day:
+                day["news" if news else "clips"] += 1
+            src = sources.setdefault((e["kind"], e["source"]), {"kind": e["kind"], "name": e["source"], "count": 0, "minutes": 0})
+            src["count"] += 1
+            src["minutes"] += round(minutes)
+        # A program still on air counts up to now.
+        for title, ts in started.items():
+            minutes = round((time.time() - ts) / 60)
+            totals["program_minutes"] += minutes
+            day = per_day.get(datetime.fromtimestamp(ts, tz).date().isoformat())
+            if day:
+                day["program_minutes"] += minutes
+        top = sorted(sources.values(), key=lambda s: (-s["minutes"], -s["count"]))[:8]
+        return {"channel": cid, "from": first.date().isoformat(), "today": now.date().isoformat(),
+                "days": [{"date": d, **v} for d, v in per_day.items()], "totals": totals, "top": top}
 
     def check_now(self, source_id: str | None = None) -> None:
         if source_id:
@@ -786,6 +879,7 @@ class Engine:
             log.info("Program %s ended on %s (%s)", p.name, ch.name, why)
             cs.on_program = None
             self._stop_recording(cs)
+            self.persist_saved()  # a program saved while it was still on air
 
         def holds(p: Program, it: Item) -> bool:
             return not it.during_programs and not p.cutins_interrupt

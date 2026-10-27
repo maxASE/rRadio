@@ -67,6 +67,9 @@ class Store:
             if "replay" not in cols:
                 # JSON: where "listen again" gets the audio (a kept file, or the source to fetch again).
                 self._db.execute("ALTER TABLE history ADD COLUMN replay TEXT NOT NULL DEFAULT ''")
+            if "saved" not in cols:
+                # When an app saved the entry for later (0 = not saved); saved entries never age out.
+                self._db.execute("ALTER TABLE history ADD COLUMN saved REAL NOT NULL DEFAULT 0")
         self.devices = Devices(self._db, self._lock)
         self.sessions = Sessions(self._db, self._lock)
 
@@ -103,21 +106,71 @@ class Store:
                 (time.time(), kind, source, title, status, detail, channel, json.dumps(replay) if replay else ""),
             )
             self._db.execute(
-                "DELETE FROM history WHERE id NOT IN (SELECT id FROM history ORDER BY id DESC LIMIT 500)"
+                "DELETE FROM history WHERE saved = 0 AND id NOT IN (SELECT id FROM history ORDER BY id DESC LIMIT 500)"
             )
+
+    _ENTRY = "SELECT id, ts, kind, source, title, status, detail, replay, saved FROM history"
+
+    @staticmethod
+    def _entries(rows) -> list[dict]:
+        keys = ["id", "ts", "kind", "source", "title", "status", "detail"]
+        return [{**dict(zip(keys, r)), "replay": replay_available(r[7]),
+                 "art": replay_field(r[7], "art") or "", "replay_from": replay_field(r[7], "from"),
+                 "duration": replay_field(r[7], "duration"), "saved": r[8] or None} for r in rows]
 
     def history(self, limit: int = 30, channel: str | None = None) -> list[dict]:
         """Entries for one channel plus the ones that concern all channels."""
         with self._lock:
             rows = self._db.execute(
-                "SELECT id, ts, kind, source, title, status, detail, replay FROM history"
-                " WHERE ? IS NULL OR channel IN (?, '') ORDER BY id DESC LIMIT ?",
+                self._ENTRY + " WHERE ? IS NULL OR channel IN (?, '') ORDER BY id DESC LIMIT ?",
                 (channel, channel, limit),
             ).fetchall()
-        keys = ["id", "ts", "kind", "source", "title", "status", "detail"]
-        return [{**dict(zip(keys, r)), "replay": replay_available(r[7]),
-                 "art": replay_field(r[7], "art") or "", "replay_from": replay_field(r[7], "from"),
-                 "duration": replay_field(r[7], "duration")} for r in rows]
+        return self._entries(rows)
+
+    def saved(self, channel: str) -> list[dict]:
+        """The channel's entries saved for later, the last saved first."""
+        with self._lock:
+            rows = self._db.execute(
+                self._ENTRY + " WHERE saved > 0 AND channel IN (?, '') ORDER BY saved DESC", (channel,)
+            ).fetchall()
+        return self._entries(rows)
+
+    def search(self, channel: str, text: str, limit: int = 30) -> list[dict]:
+        """Entries of the channel whose title or source contains `text`, newest first; a
+        program shows up once (its start), not again for its end."""
+        like = "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        with self._lock:
+            rows = self._db.execute(
+                self._ENTRY + " WHERE channel IN (?, '') AND (title LIKE ? ESCAPE '\\' OR source LIKE ? ESCAPE '\\')"
+                " AND NOT (kind = 'program' AND status = 'ended') ORDER BY id DESC LIMIT ?",
+                (channel, like, like, limit),
+            ).fetchall()
+        return self._entries(rows)
+
+    def between(self, channel: str, start: float, end: float) -> list[dict]:
+        """Every entry of a channel between two times, oldest first, for the week's numbers."""
+        with self._lock:
+            rows = self._db.execute(
+                self._ENTRY + " WHERE channel = ? AND ts >= ? AND ts < ? ORDER BY id", (channel, start, end)
+            ).fetchall()
+        return self._entries(rows)
+
+    def set_saved(self, entry_id: int, saved: bool) -> bool:
+        with self._lock, self._db:
+            cur = self._db.execute("UPDATE history SET saved = ? WHERE id = ?", (time.time() if saved else 0, entry_id))
+        return cur.rowcount > 0
+
+    def saved_replays(self) -> list[tuple[int, dict]]:
+        """(id, replay info) of every saved entry that has a kept file."""
+        with self._lock:
+            rows = self._db.execute("SELECT id, replay FROM history WHERE saved > 0 AND replay LIKE '%\"path\"%'").fetchall()
+        out = []
+        for entry_id, raw in rows:
+            try:
+                out.append((entry_id, json.loads(raw)))
+            except ValueError:
+                pass
+        return out
 
     def programs_between(self, channel: str, start: float, end: float) -> list[dict]:
         """A channel's program starts and ends between two times, oldest first."""
@@ -133,13 +186,13 @@ class Store:
         """One history entry with its replay info (None if it can't be played again)."""
         with self._lock:
             row = self._db.execute(
-                "SELECT kind, source, title, channel, replay FROM history WHERE id = ?", (entry_id,)
+                "SELECT kind, source, title, channel, replay, saved FROM history WHERE id = ?", (entry_id,)
             ).fetchone()
         if not row:
             return None
-        kind, source, title, channel, replay = row
+        kind, source, title, channel, replay, saved = row
         return {"kind": kind, "source": source, "title": title, "channel": channel,
-                "replay": json.loads(replay) if replay_available(replay) else None}
+                "replay": json.loads(replay) if replay_available(replay) else None, "saved": saved or None}
 
     def replay_of(self, entry_id: int) -> tuple[str, dict] | None:
         """(channel, replay info) of one history entry, if it can be listened to again."""

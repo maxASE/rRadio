@@ -185,6 +185,20 @@ class Invidious:
                 return {"channel_id": r["authorId"], "name": r["author"]}
         raise LookupError(f"no channel found for {text!r}")
 
+    async def search_videos(self, text: str, limit: int = 8) -> list[dict]:
+        """Videos for a search term, for "Play next" from the apps' search."""
+        results = await self._get("/api/v1/search", q=text, type="video")
+        out = []
+        for v in results:
+            if v.get("type") != "video" or v.get("liveNow") or v.get("isUpcoming") or not v.get("videoId"):
+                continue
+            out.append({"title": v.get("title", ""), "author": v.get("author", ""),
+                        "url": v["videoId"],
+                        "duration": v.get("lengthSeconds") or None, "art": self.thumbnail(v["videoId"])})
+            if len(out) >= limit:
+                break
+        return out
+
     async def latest(self, ch: VideoChannel) -> list[Item]:
         data = await self._get(f"/api/v1/channels/{ch.channel_id}/videos")
         videos = data.get("videos", []) if isinstance(data, dict) else data
