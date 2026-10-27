@@ -419,8 +419,6 @@ fieldset.formats input { margin-top: 3px; }
 .voice-time { font-variant-numeric: tabular-nums; }
 
 /* A channel's sources: one row per source, its type on the right. */
-#channel-sources h4 { margin: 4px 0 0; font-size: .95rem; }
-#channel-sources h4 + p { margin: 0; }
 .source-ticks { display: flex; flex-direction: column; }
 .source-ticks label.check { min-height: 40px; border-top: 1px solid var(--line); }
 .source-ticks label.check:first-child { border-top: 0; }

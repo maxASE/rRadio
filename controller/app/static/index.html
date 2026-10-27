@@ -141,7 +141,7 @@
           </div>
 
           <div class="card edit-only">
-            <div class="row between"><h3>Sources</h3><span class="muted small" id="channel-sources-count"></span></div>
+            <div class="row between"><h3>Stations</h3><span class="muted small" id="channel-sources-count"></span></div>
             <div class="stack" id="channel-sources"></div>
           </div>
 
@@ -245,6 +245,12 @@
         <p class="muted small">Your own jingles and ads, or the newest episode of a news feed, cut in on a timer. Spots go before waiting clips and never cut off a clip that is playing.</p>
         <ul class="list" id="spots"></ul>
       </div>
+
+      <div class="card edit-only">
+        <div class="row between"><h3>When something new arrives</h3><span class="muted small" id="cutins-count"></span></div>
+        <p class="muted small">New videos and episodes from the ticked video channels and podcasts interrupt the music on <span data-channel-name></span>, whenever they come out.</p>
+        <div class="stack" id="channel-cutins"></div>
+      </div>
     </section>
 
     <!-- SOURCES -->
@@ -252,7 +258,7 @@
       <div class="page-head">
         <div>
           <h2 class="page-title">Sources</h2>
-          <p class="muted">Everything rRadio can play, in one list. Each channel picks its own under Sources on its page.</p>
+          <p class="muted">Everything rRadio can play, in one list. Each channel picks its stations on its page, and what cuts in under Schedule.</p>
           <p class="muted small user-only">You see your own channels and subscriptions here. The video channels and podcasts you add are yours alone; Invidious and Navidrome are set up by the admin.</p>
         </div>
         <button id="btn-add-source" class="primary">+ Add source</button>
@@ -308,7 +314,7 @@
           <tbody id="source-rows"></tbody>
         </table>
       </div>
-      <p class="muted small" id="sources-note">Pick what each channel uses under Sources on its channel page: stations show up under “Station underneath”, and video channels and podcasts cut in when something new arrives.</p>
+      <p class="muted small" id="sources-note">Stations are ticked under Stations on each channel's page and show up under “Station underneath”. Video channels and podcasts are ticked under Schedule › When something new arrives, and cut in when something new comes out.</p>
 
       <div class="card hidden" id="media-card">
         <h3>Own media</h3>
