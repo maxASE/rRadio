@@ -817,28 +817,21 @@ function renderChannelSettings() {
   );
 }
 
-// The channel's own sources: which stations it can play underneath, and which
-// Video channels and podcasts cut in. Sources only says how many channels use one.
-function renderChannelSources() {
+// A channel's own ticks: on its page the stations it can play underneath, under
+// Schedule the video channels and podcasts that cut in. Sources only says how
+// many channels use each one.
+function renderSourceTicks(box, count, types, empty) {
   const c = channel();
   if (!c || !canEdit(c)) return;
-  const rows = sourceRows().filter((r) => r.type !== "media");
+  const rows = sourceRows().filter((r) => types.includes(r.type));
   const used = rows.filter((r) => usesSource(c, r)).length;
-  $("#channel-sources-count").textContent = rows.length ? `${used} of ${rows.length}` : "";
-  const group = (title, note, list) => list.length ? [
-    el("h4", {}, title),
-    el("p", { class: "muted small" }, note),
-    el("div", { class: "source-ticks" }, ...list.map((r) => el("label", { class: "check" },
+  $(count).textContent = rows.length ? `${used} of ${rows.length}` : "";
+  $(box).replaceChildren(
+    ...(rows.length ? [el("div", { class: "source-ticks" }, ...rows.map((r) => el("label", { class: "check" },
       el("input", { type: "checkbox", checked: usesSource(c, r), onchange: (e) => setUses(c, r, e.target.checked) }),
       el("span", { class: "grow" }, r.name),
-      el("span", { class: "muted small" }, TYPE_NAME[r.type])))),
-  ] : [];
-  const stations = rows.filter((r) => r.type === "station" || r.type === "navidrome");
-  const cutins = rows.filter((r) => r.type === "video" || r.type === "podcast");
-  $("#channel-sources").replaceChildren(
-    ...group("Station underneath", "Stations and playlists this channel can play.", stations),
-    ...group("What cuts in", "New videos and episodes from these interrupt the music here.", cutins),
-    el("a", { class: "small", href: "#/sources/all" }, rows.length ? "Add or edit sources" : "Add a source"),
+      el("span", { class: "muted small" }, TYPE_NAME[r.type]))))] : [el("p", { class: "muted small" }, empty)]),
+    el("a", { class: "small", href: `#/sources/${types[0]}` }, rows.length ? "Add or edit sources" : "Add one under Sources"),
   );
 }
 
@@ -1599,7 +1592,7 @@ function usedOnLinks(r) {
   const on = mine().filter((c) => usesSource(c, r));
   const links = on.flatMap((c, i) => [i ? ", " : "", el("a", { href: `#/channel/${encodeURIComponent(c.id)}` }, c.name)]);
   return el("p", { class: "muted small" }, ...(on.length ? ["Used on ", ...links, ". "] : ["Not used on any channel yet. "]),
-    "Tick or untick it under Sources on a channel's page.");
+    r.type === "video" || r.type === "podcast" ? "Tick or untick it on a channel's Schedule page." : "Tick or untick it on a channel's page.");
 }
 
 function sourceEditor(r) {
@@ -2219,13 +2212,14 @@ function renderConfig() {
     renderChannelChips($("#channel-chips"), "channel");
     renderStationChips();
     renderChannelSettings();
-    renderChannelSources();
+    renderSourceTicks("#channel-sources", "#channel-sources-count", ["station", "navidrome"], "No stations yet.");
   }
   if (view === "schedule") {
     renderChannelChips($("#schedule-chips"), "schedule");
     renderPrograms();
     renderSpots();
     renderTimeline();
+    renderSourceTicks("#channel-cutins", "#cutins-count", ["video", "podcast"], "No video channels or podcasts yet.");
   }
   if (view === "sources") { renderSources(); renderMedia(); }
   if (view === "settings") { if (me.admin) renderSettings(); renderPairChannels(); }
