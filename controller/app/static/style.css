@@ -135,6 +135,8 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
 label.field { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: .85rem; }
 label.field input { color: var(--text); font-size: 15px; }
 label.check { display: flex; align-items: center; gap: 8px; }
+/* A long label must not squeeze its box into a dot. */
+label.check > input[type=checkbox], label.check > input[type=radio] { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
 label.inline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
 .chip, .chips-nav a {

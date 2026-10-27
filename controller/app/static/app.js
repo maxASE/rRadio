@@ -800,16 +800,16 @@ function renderChannelSettings() {
     el("label", { class: "field" }, "Stream name", mount),
     el("p", { class: "muted small" }, `Plays at /${c.mount}.mp3. Renaming the stream restarts the audio engine for a few seconds.`),
     ...(owner ? [owner] : []),
-    el("label", { class: "check" },
+    el("label", { class: "check small" },
       el("input", { type: "checkbox", checked: !!c.public, onchange: (e) => { c.public = e.target.checked; saveConfig(c.public ? `${c.name} is public now` : `${c.name} is private now`); } }),
-      "Public: everyone with a login can listen and see what's on, but only its owner and the admin can change it"),
-    el("label", { class: "check" },
+      "Public: other users can listen, but not change it"),
+    el("label", { class: "check small" },
       el("input", { type: "checkbox", checked: c.all_sources, onchange: (e) => {
         c.all_sources = e.target.checked;
         if (!c.all_sources && !c.sources.length) c.sources = [...cfg.video, ...cfg.podcasts].map((s) => s.id);
         saveConfig();
       } }),
-      "Cut in every video channel and podcast, including ones added later"),
+      "Cut in all my video channels and podcasts, also new ones"),
     el("div", { class: "row gap" },
       el("a", { class: "button", href: `/api/channels/${encodeURIComponent(c.id)}/export`, title: "A zip with this channel's stations, programs, spots, sources, own audio and pictures, for Settings › Import on another rRadio" }, "Export channel"),
       el("button", {
