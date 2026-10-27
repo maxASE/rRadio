@@ -326,14 +326,19 @@
         <p class="muted">Everyone with a login can make their own channels, with their own stations, programs, spots and files. A channel they switch to public shows up for everyone else to listen to, but only its owner (and you) can change it.</p>
         <p class="small warn-text" id="users-warning" hidden>No <code>UI_PASSWORD</code> is set, so there is no login and everyone is the admin. Set one in <code>.env</code> to use user accounts.</p>
         <div id="users-list" class="stack"></div>
-        <form id="form-user" class="row gap">
-          <input name="name" placeholder="User name, e.g. anna" pattern="[a-z0-9][a-z0-9._\-]{0,31}" required autocomplete="off">
-          <input name="password" type="password" placeholder="Password (8+ characters)" minlength="8" required autocomplete="new-password">
-          <select name="role" aria-label="Role">
-            <option value="user">User</option>
-            <option value="admin">Admin</option>
-          </select>
-          <button class="primary">Add user</button>
+        <form id="form-user" class="add-user">
+          <h3>Add a user</h3>
+          <div class="add-user-fields">
+            <label class="field">User name <input name="name" placeholder="e.g. anna" pattern="[a-z0-9][a-z0-9._\-]{0,31}" required autocomplete="off"></label>
+            <label class="field">Password <input name="password" type="password" placeholder="At least 8 characters" minlength="8" required autocomplete="new-password"></label>
+            <label class="field">Role
+              <select name="role">
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+              </select>
+            </label>
+            <button class="primary">Add user</button>
+          </div>
         </form>
       </div>
       <div class="card admin-only">
@@ -414,7 +419,7 @@
             <div><button type="button" class="small-btn" id="btn-pair-cancel">Cancel</button></div>
           </div>
         </div>
-        <h3>Paired</h3>
+        <h3 class="paired-head">Paired</h3>
         <div id="devices-list" class="stack"></div>
       </div>
       <div class="card">
