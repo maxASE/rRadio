@@ -321,7 +321,7 @@ button.listen.playing { background: var(--accent); color: var(--accent-text); }
 .chips label { display: inline-flex; align-items: center; gap: 6px; font-size: .9rem; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; }
 .chips input { margin: 0; }
 .table-box { padding: 0; overflow-x: auto; }
-table.sources { width: 100%; min-width: 760px; border-collapse: collapse; font-size: .92rem; }
+table.sources { width: 100%; min-width: 640px; border-collapse: collapse; font-size: .92rem; }
 table.sources th { text-align: left; color: var(--muted); font-weight: 600; padding: 14px 12px; white-space: nowrap; }
 table.sources th.center { text-align: center; }
 table.sources td { padding: 12px; border-top: 1px solid var(--line); vertical-align: middle; }
@@ -334,7 +334,6 @@ table.sources .empty { color: var(--muted); padding: 20px; }
 .sdot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--ok); }
 .sdot.bad { background: var(--bad); }
 .sdot.off { background: var(--radio); }
-.big-check { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; }
 #media .folder-head { font-weight: 600; padding-top: 14px; }
 
 /* settings */
@@ -418,3 +417,10 @@ fieldset.formats input { margin-top: 3px; }
 #voice-audio { width: 100%; }
 #btn-voice-rec.recording { background: var(--bad); border-color: var(--bad); }
 .voice-time { font-variant-numeric: tabular-nums; }
+
+/* A channel's sources: one row per source, its type on the right. */
+#channel-sources h4 { margin: 4px 0 0; font-size: .95rem; }
+#channel-sources h4 + p { margin: 0; }
+.source-ticks { display: flex; flex-direction: column; }
+.source-ticks label.check { min-height: 40px; border-top: 1px solid var(--line); }
+.source-ticks label.check:first-child { border-top: 0; }

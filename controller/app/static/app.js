@@ -803,7 +803,6 @@ function renderChannelSettings() {
     el("label", { class: "check small" },
       el("input", { type: "checkbox", checked: !!c.public, onchange: (e) => { c.public = e.target.checked; saveConfig(c.public ? `${c.name} is public now` : `${c.name} is private now`); } }),
       "Public: other users can listen, but not change it"),
-    el("p", { class: "muted small" }, "Which video channels and podcasts cut in here: tick them under ", el("a", { href: "#/sources/all" }, "Sources"), "."),
     el("div", { class: "row gap" },
       el("a", { class: "button", href: `/api/channels/${encodeURIComponent(c.id)}/export`, title: "A zip with this channel's stations, programs, spots, sources, own audio and pictures, for Settings › Import on another rRadio" }, "Export channel"),
       el("button", {
@@ -815,6 +814,31 @@ function renderChannelSettings() {
           saveConfig("Channel removed");
         },
       }, "Remove channel")),
+  );
+}
+
+// The channel's own sources: which stations it can play underneath, and which
+// Video channels and podcasts cut in. Sources only says how many channels use one.
+function renderChannelSources() {
+  const c = channel();
+  if (!c || !canEdit(c)) return;
+  const rows = sourceRows().filter((r) => r.type !== "media");
+  const used = rows.filter((r) => usesSource(c, r)).length;
+  $("#channel-sources-count").textContent = rows.length ? `${used} of ${rows.length}` : "";
+  const group = (title, note, list) => list.length ? [
+    el("h4", {}, title),
+    el("p", { class: "muted small" }, note),
+    el("div", { class: "source-ticks" }, ...list.map((r) => el("label", { class: "check" },
+      el("input", { type: "checkbox", checked: usesSource(c, r), onchange: (e) => setUses(c, r, e.target.checked) }),
+      el("span", { class: "grow" }, r.name),
+      el("span", { class: "muted small" }, TYPE_NAME[r.type])))),
+  ] : [];
+  const stations = rows.filter((r) => r.type === "station" || r.type === "navidrome");
+  const cutins = rows.filter((r) => r.type === "video" || r.type === "podcast");
+  $("#channel-sources").replaceChildren(
+    ...group("Station underneath", "Stations and playlists this channel can play.", stations),
+    ...group("What cuts in", "New videos and episodes from these interrupt the music here.", cutins),
+    el("a", { class: "small", href: "#/sources/all" }, rows.length ? "Add or edit sources" : "Add a source"),
   );
 }
 
@@ -1519,8 +1543,7 @@ function renderSources() {
   $("#media-card").classList.toggle("hidden", !(media || sourceFilter === "all"));
   $("#source-head").replaceChildren(
     el("tr", {},
-      el("th", {}, "Source"), el("th", {}, "Type"), el("th", {}, "Latest"),
-      ...mine().map((c) => el("th", { class: "center" }, c.name)),
+      el("th", {}, "Source"), el("th", {}, "Type"), el("th", {}, "Latest"), el("th", {}, "Used on"),
       el("th", {}, el("span", { class: "sr" }, "Actions"))),
   );
   renderSourcesTable();
@@ -1530,7 +1553,7 @@ function renderSources() {
 function renderSourcesTable(refresh = false) {
   if (!cfg || view !== "sources") return;
   const rows = sourceRows().filter((r) => sourceFilter === "all" || r.type === sourceFilter);
-  const cols = mine().length + 4;
+  const cols = 5;
   const trs = [];
   for (const r of rows) {
     const latest = sourceLatest(r);
@@ -1546,8 +1569,7 @@ function renderSourcesTable(refresh = false) {
             r.base?.image && status?.image_errors?.[r.base.image] ? el("div", { class: "small bad" }, `Logo didn't load: ${status.image_errors[r.base.image]}`) : null))),
       el("td", { class: "muted" }, TYPE_NAME[r.type]),
       el("td", { class: "muted small latest" }, latest.state === "bad" ? el("span", { class: "bad" }, latest.text) : latest.text, latest.checked ? el("div", {}, latest.checked) : null),
-      ...mine().map((c) => el("td", { class: "center" },
-        el("input", { type: "checkbox", class: "big-check", checked: usesSource(c, r), "aria-label": `Use ${r.name} on ${c.name}`, onchange: (e) => setUses(c, r, e.target.checked) }))),
+      usedOnCell(r),
       el("td", { class: "right" }, el("button", { class: "small-btn", "aria-expanded": openSource === r.key ? "true" : "false", onclick: () => { openSource = openSource === r.key ? null : r.key; renderSourcesTable(); } }, openSource === r.key ? "Close" : "Edit")),
     ));
     if (openSource === r.key) trs.push(el("tr", { class: "editor-row" }, el("td", { colspan: cols }, sourceEditor(r))));
@@ -1563,6 +1585,21 @@ function renderSourcesTable(refresh = false) {
     return;
   }
   box.replaceChildren(...(trs.length ? trs : [el("tr", {}, el("td", { colspan: cols, class: "empty" }, "Nothing here yet. Add one with + Add source."))]));
+}
+
+// "3 channels", with the names on hover; the ticks themselves are on each channel's page.
+function usedOnCell(r) {
+  const names = mine().filter((c) => usesSource(c, r)).map((c) => c.name);
+  if (!names.length) return el("td", { class: "muted small" }, "Not used");
+  return el("td", { class: "small", title: names.join(", ") }, names.length === 1 ? names[0] : `${names.length} channels`);
+}
+
+// Links to the channels using a source, where it is ticked or unticked.
+function usedOnLinks(r) {
+  const on = mine().filter((c) => usesSource(c, r));
+  const links = on.flatMap((c, i) => [i ? ", " : "", el("a", { href: `#/channel/${encodeURIComponent(c.id)}` }, c.name)]);
+  return el("p", { class: "muted small" }, ...(on.length ? ["Used on ", ...links, ". "] : ["Not used on any channel yet. "]),
+    "Tick or untick it under Sources on a channel's page.");
 }
 
 function sourceEditor(r) {
@@ -1598,7 +1635,8 @@ function sourceEditor(r) {
           openSource = null;
           saveConfig("Station removed");
         } }, "Remove everywhere")),
-      el("p", { class: "muted small" }, "Changes apply to this station on every channel that has it."));
+      el("p", { class: "muted small" }, "Changes apply to this station on every channel that has it."),
+      usedOnLinks(r));
   }
   const src = r.src;
   const kind = r.type;
@@ -1606,7 +1644,8 @@ function sourceEditor(r) {
   const num = (k, label, step) => el("label", {}, label, el("input", { type: "number", min: 0, step, value: src[k], "data-k": k }));
   const txt = (k, label, ph) => el("label", {}, label, el("input", { value: src[k], placeholder: ph, "data-k": k }));
   const box = el("div", { class: "stack" },
-    owned ? null : el("p", { class: "muted small" }, `Added by ${ownerName(src.owner)}, so only they can change its filters or remove it. Untick your channels above to stop cutting it in.`),
+    owned ? null : el("p", { class: "muted small" }, `Added by ${ownerName(src.owner)}, so only they can change its filters or remove it.`),
+    usedOnLinks(r),
     el("label", { class: "check" + (owned ? "" : " hidden") }, el("input", { type: "checkbox", checked: src.enabled, onchange: (e) => { src.enabled = e.target.checked; saveConfig(src.enabled ? "Enabled" : "Paused"); } }), "Check this source for new items"),
     el("div", { class: "filters" + (owned ? "" : " hidden") },
       num("min_minutes", "Min minutes", 0.5),
@@ -2180,6 +2219,7 @@ function renderConfig() {
     renderChannelChips($("#channel-chips"), "channel");
     renderStationChips();
     renderChannelSettings();
+    renderChannelSources();
   }
   if (view === "schedule") {
     renderChannelChips($("#schedule-chips"), "schedule");
