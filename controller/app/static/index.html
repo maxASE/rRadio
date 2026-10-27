@@ -140,6 +140,11 @@
             <p class="muted small" id="listeners"></p>
           </div>
 
+          <div class="card edit-only">
+            <div class="row between"><h3>Sources</h3><span class="muted small" id="channel-sources-count"></span></div>
+            <div class="stack" id="channel-sources"></div>
+          </div>
+
           <details class="card edit-only">
             <summary><h3>Channel settings</h3></summary>
             <div class="stack" id="channel-settings"></div>
@@ -247,7 +252,7 @@
       <div class="page-head">
         <div>
           <h2 class="page-title">Sources</h2>
-          <p class="muted">Everything rRadio can play, in one list. Tick the channels each source feeds.</p>
+          <p class="muted">Everything rRadio can play, in one list. Each channel picks its own under Sources on its page.</p>
           <p class="muted small user-only">You see your own channels and subscriptions here. The video channels and podcasts you add are yours alone; Invidious and Navidrome are set up by the admin.</p>
         </div>
         <button id="btn-add-source" class="primary">+ Add source</button>
@@ -303,7 +308,7 @@
           <tbody id="source-rows"></tbody>
         </table>
       </div>
-      <p class="muted small" id="sources-note">Stations show up under “Station underneath” on each ticked channel. Video channels and podcasts cut in when something new arrives.</p>
+      <p class="muted small" id="sources-note">Pick what each channel uses under Sources on its channel page: stations show up under “Station underneath”, and video channels and podcasts cut in when something new arrives.</p>
 
       <div class="card hidden" id="media-card">
         <h3>Own media</h3>

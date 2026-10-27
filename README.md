@@ -100,9 +100,11 @@ at `/anna.mp3` (change the stream name if you like). The first channel keeps
 `/radio.mp3`, so existing links keep working.
 
 Which video channels and podcasts cut into which channel is decided by the
-ticks under **Sources**. When you add one, pick the channels it goes to (all of
-yours are ticked to start with); change the ticks any time later. Stations work the same way: tick a station for every channel that
-should be able to play it. A video that several channels follow is downloaded only once.
+ticks in the **Sources** card on each channel's page. When you add one, pick the
+channels it goes to (all of yours are ticked to start with); change the ticks
+any time later. Stations work the same way: tick a station on every channel that
+should be able to play it. The **Sources** page lists everything in one place and
+shows how many channels use each source. A video that several channels follow is downloaded only once.
 
 Adding, renaming or removing a channel restarts the audio engine, so every
 stream drops for a few seconds. Icecast needs one mount per channel and
