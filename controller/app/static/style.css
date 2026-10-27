@@ -125,7 +125,12 @@ input, select {
   background: var(--bg); color: var(--text); min-width: 0; min-height: 40px;
 }
 input[type=checkbox], input[type=radio] { min-height: 0; }
-select { width: auto; }
+/* Own arrow, so it sits inside the padding instead of against the edge. */
+select {
+  width: auto; padding-right: 36px; appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a857c' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 14px center; background-size: 12px 8px;
+}
 input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 label.field { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: .85rem; }
 label.field input { color: var(--text); font-size: 15px; }
@@ -180,7 +185,12 @@ body.readonly .edit-only, body.readonly :is(#queue, #why, #programs, #spots, #tl
 body.readonly :is(#programs, #spots) input, body.readonly #station-chips .add-link { display: none !important; }
 body.readonly #station-chips { pointer-events: none; }
 .readonly-note { padding: 10px 14px; border-radius: 8px; background: var(--accent-soft); color: var(--accent-ink); border: 1px solid var(--accent-line); }
-.user-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.user-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.add-user { margin-top: 20px; }
+.add-user-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(120px, auto) auto; gap: 12px 16px; align-items: end; }
+.add-user-fields input, .add-user-fields select { width: 100%; }
+.paired-head { margin-top: 28px; }
+@media (max-width: 700px) { .add-user-fields { grid-template-columns: 1fr; } .add-user-fields button { justify-self: start; } }
 .channel-card { display: flex; flex-direction: column; gap: 12px; }
 .card-title { font-size: 1.15rem; font-weight: 700; color: var(--text); text-decoration: none; }
 .card-title:hover { color: var(--accent); }

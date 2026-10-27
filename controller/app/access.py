@@ -3,8 +3,9 @@
 - The admin (the .env login, a user with the role "admin", an admin device,
   or anyone when no UI_PASSWORD is set) may do everything.
 - A user controls the channels they own and listens to everyone's public
-  channels. Saving the config as a user only changes their own channels and
-  the sources they added; everything else is kept as it is.
+  channels. Video channels and podcasts are per person: a user sees and
+  cuts in only the ones they added. Saving the config as a user only changes
+  their own channels and sources; everything else is kept as it is.
 - A member device is limited to its channels; one paired by a user acts as
   that user (and is further limited to its channels, if it has any).
 """
@@ -57,10 +58,13 @@ current: ContextVar[Access] = ContextVar("rradio_access", default=ADMIN)
 
 
 def visible_config(cfg: Config, acc: Access) -> dict:
-    """The config as this person sees it: other people's private channels left out."""
+    """The config as this person sees it: other people's private channels and
+    other people's video channels and podcasts left out."""
     data = cfg.masked()
     if not acc.admin:
         data["channels"] = [d for c, d in zip(cfg.channels, data["channels"]) if acc.can_listen(c)]
+        for key in ("video", "podcasts"):
+            data[key] = [s for s in data[key] if s["owner"] == acc.uid]
     return data
 
 
@@ -89,9 +93,11 @@ def merge_user_config(cur: Config, body: dict, user: User) -> dict:
     for key in ("video", "podcasts"):
         data[key] = merge(data[key], body.get(key) or [])
     data["channels"] = merge(data["channels"], body.get("channels") or [])
+    own_sources = {s.get("id") for key in ("video", "podcasts") for s in data[key] if s.get("owner") == user.id}
     for ch in data["channels"]:
         if ch.get("owner") != user.id:
             continue
+        ch["sources"] = [s for s in ch.get("sources") or [] if s in own_sources]
         for spot in ch.get("spots") or []:
             files = spot.get("files") if isinstance(spot, dict) else None
             for f in files or []:

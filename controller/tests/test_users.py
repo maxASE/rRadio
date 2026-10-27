@@ -107,19 +107,35 @@ def test_user_media_is_kept_to_their_folder(admin, app_main):
     assert c.put("/api/config", json=cfg).status_code == 200
 
 
-def test_user_sources_are_shared_but_only_owner_edits(admin, app_main):
+def test_users_have_their_own_subscriptions(admin, app_main):
     u, c = make_user(admin, app_main)
     _, other = make_user(admin, app_main)
+    admin_cfg = admin.get("/api/config").json()
+    admin_cfg["video"].append({"id": f"adm{u['id']}", "name": "Admin's", "channel_id": "UCadmin", "enabled": False})
+    assert admin.put("/api/config", json=admin_cfg).status_code == 200
+    # A new user sees none of the admin's subscriptions.
+    assert c.get("/api/config").json()["video"] == []
     cfg = c.get("/api/config").json()
     cfg["podcasts"].append({"id": f"pod{u['id']}", "name": "Mine", "url": "http://feed.example/rss", "enabled": False})
+    cfg["channels"].append({"name": "Subs", "mount": f"subs-{u['name']}", "all_sources": False,
+                            "sources": [f"pod{u['id']}", f"adm{u['id']}"]})
     assert c.put("/api/config", json=cfg).status_code == 200
+    full = app_main.store.config
+    mine = next(ch for ch in full.channels if ch.mount == f"subs-{u['name']}")
+    assert mine.sources == [f"pod{u['id']}"]  # someone else's source can't be ticked
+    pod = full.source("podcasts", f"pod{u['id']}")
+    adm = full.source("video", f"adm{u['id']}")
+    assert pod.owner == u["id"] and mine.wants(pod) and not mine.wants(adm)
+    # "Every source" on a user's channel means their own sources only; the admin's channels keep the admin's.
+    mine.all_sources = True
+    assert mine.wants(pod) and not mine.wants(adm)
+    assert full.channel("kid").wants(adm) and not full.channel("kid").wants(pod)
+    # Other users don't see it, and can't change it.
+    assert other.get("/api/config").json()["podcasts"] == []
     cfg = other.get("/api/config").json()
-    pod = next(p for p in cfg["podcasts"] if p["id"] == f"pod{u['id']}")
-    assert pod["owner"] == u["id"]
-    pod["name"] = "Renamed"
-    cfg["podcasts"] = [p for p in cfg["podcasts"]]
+    cfg["podcasts"].append({"id": f"pod{u['id']}", "name": "Renamed", "url": "http://x.example/rss"})
     other.put("/api/config", json=cfg)
-    assert next(p for p in admin.get("/api/config").json()["podcasts"] if p["id"] == f"pod{u['id']}")["name"] == "Mine"
+    assert app_main.store.config.source("podcasts", f"pod{u['id']}").name == "Mine"
 
 
 def test_user_device_acts_as_user(admin, app_main, anon):
@@ -159,3 +175,11 @@ def test_password_change(admin, app_main):
     fresh = TestClient(app_main.app)
     assert fresh.post("/api/login", json={"username": u["name"], "password": pw}).status_code == 401
     assert fresh.post("/api/login", json={"username": u["name"], "password": "another-pw"}).status_code == 200
+
+
+def test_user_reaches_member_features_on_own_channel(admin, app_main):
+    u, c = make_user(admin, app_main)
+    ch = add_channel(c, "Saved", f"saved-{u['name']}")
+    assert c.get(f"/api/saved?channel={ch['id']}").status_code == 200
+    assert c.get(f"/api/week/numbers?channel={ch['id']}").status_code == 200
+    assert c.get("/api/saved?channel=kid").status_code == 403

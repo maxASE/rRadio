@@ -79,13 +79,13 @@ MEMBER_ROUTES = {
 # the user's own channels, sources, files and devices (or public channels to listen).
 USER_ROUTES = {
     "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio|now/audio|navidrome/playlists|week"
-                      r"|config|media|devices|channels/[^/]+/export|spots/[^/]+/info)"),
+                      r"|saved|search|week/numbers|config|media|devices|channels/[^/]+/export|spots/[^/]+/info)"),
     "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire"
-                       r"|history/\d+/play-next|quiet|media|images|video/resolve|station/logo|podcast/resolve|feeds/check"
+                       r"|history/\d+/(play-next|save)|quiet|queue/order|media|images|video/resolve|station/logo|podcast/resolve|feeds/check"
                        r"|programs/title-check|check|devices/pair|import|me/password|logout)"),
     "PUT": re.compile(r"/api/config"),
     "PATCH": re.compile(r"/api/devices/[^/]+"),
-    "DELETE": re.compile(r"/api/(queue/.+|history/\d+/replay|media/.+|devices/pair/.+|devices/[^/]+)"),
+    "DELETE": re.compile(r"/api/(queue/.+|history/\d+/(replay|save)|media/.+|devices/pair/.+|devices/[^/]+)"),
 }
 
 
@@ -360,6 +360,8 @@ def build_status(request: Request, channel: str | None, a: Access) -> dict:
         listen = {c.id for c in cfg.channels if a.can_listen(c)}
         data["channels"] = [c for c in data["channels"] if c["id"] in listen]
         data["incoming"] = [i for i in data["incoming"] if i["channel"] in listen]
+        own = {s.id for s in cfg.video + cfg.podcasts if s.owner == a.uid}
+        data["sources"] = {k: v for k, v in (data.get("sources") or {}).items() if k in own}
     data["streams"] = stream_urls(request, data.get("channel", {}).get("id"))
     names = owner_names()
     for c in data.get("channels", []) + ([data["channel"]] if data.get("channel") else []):
@@ -967,9 +969,8 @@ def _own_entry(entry_id: int) -> dict:
     entry = state.entry(entry_id)
     if not entry:
         raise HTTPException(404, "no such history entry")
-    dev = restricted()
-    if dev and entry["channel"] and not dev.may_use(entry["channel"]):
-        raise HTTPException(403, "this device may not use that channel")
+    if entry["channel"]:
+        channel_or_404(entry["channel"])
     return entry
 
 
@@ -1011,10 +1012,9 @@ async def search(q: str, channel: str | None = None, video: bool = False):
     cfg = store.config
     sources = [{"kind": "station", "id": s.id, "name": s.name} for s in ch.stations if low in s.name.lower()]
     sources += [{"kind": "spot", "id": s.id, "name": s.name} for s in ch.spots if low in s.name.lower()]
-    allowed = None if ch.all_sources else set(ch.sources)
     sources += [{"kind": kind, "id": s.id, "name": s.name}
                 for kind, items in (("video", cfg.video), ("podcasts", cfg.podcasts))
-                for s in items if low in s.name.lower() and (allowed is None or s.id in allowed)]
+                for s in items if low in s.name.lower() and ch.wants(s)]
     found = {"history": [{**e, "art": engine.art.path(e["art"])} for e in state.search(ch.id, text)],
              "sources": sources, "videos": []}
     if video and cfg.settings.invidious_url:

@@ -289,9 +289,10 @@ and gets their own part of rRadio:
 - **Public channels.** Ticking **Public** under a channel's *Channel settings*
   shows it to every other user under *Public channels* on Home. They can
   listen, see what is on and its schedule, but not change it, skip or cut in.
-- **Sources.** Video channels and podcasts are one shared list. Users can add
-  more and tick them on their own channels; only whoever added one (or the
-  admin) can change its filters or remove it.
+- **Subscriptions.** Each user adds their own video channels and podcasts and
+  only sees and cuts in those; a new user starts with none. *Every source* on
+  a user's channel means every source of that user. The admin sees everyone's.
+  Invidious and Navidrome are set up once by the admin and used by everyone.
 - **Own files.** A user's uploads go into `users/<name>/` in the media folder,
   and their spots can only play files from there.
 - **Apps.** A user pairs their own phones under *Settings › Apps and devices*.

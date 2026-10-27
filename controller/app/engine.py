@@ -369,11 +369,11 @@ class Engine:
                 self.downloads.put_nowait(item.key)
         log.info("New item for %s from %s: %s", item.channel, item.source_name, item.title)
 
-    def enqueue_all(self, item: Item, source_id: str | None = None) -> int:
+    def enqueue_all(self, item: Item, src=None) -> int:
         """Queue `item` on every channel that takes cut-ins from its source."""
         n = 0
         for ch in self.config.channels:
-            if source_id is None or ch.wants(source_id):
+            if src is None or ch.wants(src):
                 self.enqueue(item.copy_for(ch.id))
                 n += 1
         return n
@@ -632,12 +632,12 @@ class Engine:
             reason = passes_filters(src, it.title, it.duration)
             if not reason and max_age and it.published and time.time() - it.published > max_age:
                 reason = "older than max age"
-            if not reason and not any(c.wants(src.id) for c in self.config.channels):
+            if not reason and not any(c.wants(src) for c in self.config.channels):
                 reason = "no channel plays this source"
             if reason:
                 self.store.add_history(kind, src.name, it.title, "skipped", reason)
                 continue
-            self.enqueue_all(it, src.id)
+            self.enqueue_all(it, src)
 
     # --- downloading -------------------------------------------------------
 
