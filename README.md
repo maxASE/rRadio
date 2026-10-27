@@ -371,6 +371,13 @@ queue. Programs and things played by hand still play. `"until": null` ends it
 early; `/api/status` shows `quiet_until`. The apps use this for the evening
 sleep timer and end it when the alarm goes off.
 
+**Scroll back in the clip on air.** While a cut-in plays, `now` in
+`/api/status` has its `key` and `listen_back: true` when the apps may fetch it
+with `GET /api/now/audio?channel=<id>&key=<key>` (Range works, so the player
+can seek). It comes from the clip's source again (iPhones can't play the
+radio's WebM/Opus copy); voice messages and own media are served from their
+file. Once that clip is over the answer is 410.
+
 **Listen again.** The apps can play a clip from the history again, on the phone
 only, with `GET /api/history/<id>/audio` (the `id` and `replay` fields of the
 `history` entries in `/api/status`), or put it back on the radio with

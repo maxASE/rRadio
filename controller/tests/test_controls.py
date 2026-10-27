@@ -297,3 +297,27 @@ def test_week_lists_programs_and_spots(admin, app_main):
                        " VALUES (?, 'program', 'Late show', 'Late show', 'ended', '', ?, '')", (t0 + 3000, ch["id"]))
     mon = admin.get(f"/api/week?channel={ch['id']}&day=2026-10-21").json()["days"][0]
     assert mon["programs"][0]["ran"]["from"] == 22 * 60 + 5 and mon["programs"][0]["ran"]["to"] == 22 * 60 + 55
+
+
+def test_the_clip_on_air_can_be_listened_back(admin, app_main, monkeypatch):
+    from app.sources import Item
+
+    eng = app_main.engine
+    cid = app_main.store.config.channels[0].id
+    it = Item(kind="video", source_id="src", source_name="Riks", item_id="abc", title="Clip",
+              media="dQw4w9WgXcQ", state="playing", channel=cid)
+    eng.items.append(it)
+    try:
+        assert eng.now_audio(cid) == {"media": "dQw4w9WgXcQ"}
+        assert eng.now_audio(cid, key=it.key) == {"media": "dQw4w9WgXcQ"}
+        assert eng.now_audio(cid, key="src:other") is None
+        assert admin.get(f"/api/now/audio?channel={cid}&key=src:other").status_code == 410
+
+        async def fake(info, request):
+            return app_main.JSONResponse(info)
+
+        monkeypatch.setattr(app_main, "replay_response", fake)
+        assert admin.get(f"/api/now/audio?channel={cid}&key={it.key}").json() == {"media": "dQw4w9WgXcQ"}
+    finally:
+        eng.items.remove(it)
+    assert admin.get(f"/api/now/audio?channel={cid}").status_code == 410

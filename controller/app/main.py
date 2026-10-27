@@ -68,7 +68,7 @@ app = FastAPI(title="rRadio", version=__version__, lifespan=lifespan, docs_url="
 
 # What a "member" device may call; everything else needs an admin device or the UI password.
 MEMBER_ROUTES = {
-    "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio|navidrome/playlists|week)"),
+    "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio|now/audio|navidrome/playlists|week)"),
     "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire|history/\d+/play-next|quiet)"),
     "DELETE": re.compile(r"/api/(queue/.+|history/\d+/replay)"),
 }
@@ -765,6 +765,23 @@ async def history_audio(entry_id: int, request: Request):
     dev = restricted()
     if dev and channel and not dev.may_use(channel):
         raise HTTPException(403, "this device may not use that channel")
+    return await replay_response(info, request)
+
+
+@app.get("/api/now/audio")
+async def now_audio(request: Request, channel: str | None = None, key: str | None = None):
+    """The cut-in on air now, for one listener: lets the apps scroll back in a clip
+    while the radio plays it. With `key` (now.key in the status) it answers 410 once
+    that clip is over, rather than serving the next one."""
+    ch = channel_or_404(channel)
+    info = engine.now_audio(ch.id, key)
+    if not info:
+        raise HTTPException(410, "that clip is over")
+    return await replay_response(info, request)
+
+
+async def replay_response(info: dict, request: Request):
+    """Serves a kept file, or fetches the clip again from its source with Range passed on."""
     if info.get("path"):
         return FileResponse(info["path"])
     media_ref = info["media"]

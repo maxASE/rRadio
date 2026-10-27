@@ -644,6 +644,18 @@ class Engine:
             return {"path": it.path, **art}
         return {"media": it.media, **art} if it.media else None
 
+    def now_audio(self, cid: str, key: str | None = None) -> dict | None:
+        """Where the apps get the cut-in playing on a channel now, to scroll back in it on
+        the phone: the file itself for own media and voice messages (phones can play
+        those), else its source again (the radio's copy may be WebM/Opus, which iPhones
+        can't play). None when nothing replayable plays, or `key` is not what plays."""
+        it = next((i for i in self.items if i.channel == cid and i.state == "playing"), None)
+        if it is None or (key and it.key != key):
+            return None
+        if it.path and (it.keep_file or it.kind in ("voice", "inbox")) and Path(it.path).is_file():
+            return {"path": it.path}
+        return {"media": it.media} if it.media and it.kind != "inbox" else None
+
     def _item_wins(self, cs: ChannelState, it: Item, due: DueProgram) -> bool:
         start = due.start.timestamp()
         if int(it.arrived) < int(start):
@@ -1071,6 +1083,9 @@ class Engine:
                 "elapsed": st["cutin_elapsed"],
                 "duration": st["cutin_elapsed"] + st["cutin_remaining"],
                 "art": self.art.path(playing.art),
+                "key": playing.key,
+                # The apps can scroll back in it while it plays (GET /api/now/audio).
+                "listen_back": self.now_audio(ch.id) is not None,
             }
         base = cs.on_program.program if cs.on_program else ch.station()
         mode = "program" if cs.on_program else "station"
