@@ -62,6 +62,9 @@ class Item:
     between_songs: bool = False  # wait for the next song change on the station
     during_programs: bool = False  # may play while a scheduled program is on
     art: str = ""  # picture to show while it plays; fetched by the controller, never the browser
+    live: str = ""  # "live", "upcoming" or "processing": a live video Invidious can't play yet
+    wait_since: float = 0.0  # on the waiting list since then (lives and failed downloads)
+    wait_tries: int = 0
 
     @property
     def key(self) -> str:
@@ -185,16 +188,40 @@ class Invidious:
                 return {"channel_id": r["authorId"], "name": r["author"]}
         raise LookupError(f"no channel found for {text!r}")
 
+    async def search_videos(self, text: str, limit: int = 8) -> list[dict]:
+        """Videos for a search term, for "Play next" from the apps' search."""
+        results = await self._get("/api/v1/search", q=text, type="video")
+        out = []
+        for v in results:
+            if v.get("type") != "video" or v.get("liveNow") or v.get("isUpcoming") or not v.get("videoId"):
+                continue
+            out.append({"title": v.get("title", ""), "author": v.get("author", ""),
+                        "url": v["videoId"],
+                        "duration": v.get("lengthSeconds") or None, "art": self.thumbnail(v["videoId"])})
+            if len(out) >= limit:
+                break
+        return out
+
     async def latest(self, ch: VideoChannel) -> list[Item]:
+        """The channel's newest videos, plus its lives if `ch.lives` (the video site lists them
+        on a separate Live tab). Lives that can't be played yet carry `live`."""
         data = await self._get(f"/api/v1/channels/{ch.channel_id}/videos")
         videos = data.get("videos", []) if isinstance(data, dict) else data
+        if ch.lives:
+            try:
+                data = await self._get(f"/api/v1/channels/{ch.channel_id}/streams")
+                videos = videos + (data.get("videos", []) if isinstance(data, dict) else data)
+            except Exception as e:  # older Invidious, or a channel without lives
+                log.info("lives of %s failed: %s", ch.name, e)
         avatar = await self.channel_avatar(ch.channel_id) if videos else ""
-        items = []
+        items, ids = [], set()
         for v in videos:
-            if v.get("liveNow") or v.get("isUpcoming") or v.get("premium"):
+            if v.get("premium") or not v.get("videoId") or v["videoId"] in ids:
                 continue
-            if v.get("lengthSeconds", 0) <= 0:
+            live = live_state(v)
+            if live and not ch.lives:
                 continue
+            ids.add(v["videoId"])
             items.append(
                 Item(
                     kind="video",
@@ -206,9 +233,23 @@ class Invidious:
                     duration=float(v.get("lengthSeconds") or 0) or None,
                     published=float(v["published"]) if v.get("published") else None,
                     art=avatar or self.thumbnail(v["videoId"]),
+                    live=live,
                 )
             )
         return items
+
+    async def playable(self, video_id: str) -> tuple[str, dict]:
+        """Whether Invidious can play a video now: ("", info) when it can, otherwise
+        the reason it can't yet ("live", "upcoming", "processing") and what it said."""
+        try:
+            v = await self._get(f"/api/v1/videos/{video_id}")
+        except httpx.HTTPStatusError as e:
+            # Invidious answers lives and recordings still being processed with an error.
+            return "processing", {"error": f"Invidious said {e.response.status_code}"}
+        state = live_state(v)
+        if not state and not any(str(f.get("type", "")).startswith("audio/") for f in v.get("adaptiveFormats", [])):
+            state = "processing"
+        return state, v
 
     async def video_item(self, video_id: str) -> Item:
         v = await self._get(f"/api/v1/videos/{video_id}")
@@ -236,6 +277,17 @@ class Invidious:
         except Exception as e:  # the latest_version URL may still work
             log.info("video info for %s failed: %s", video_id, e)
         return urls
+
+
+def live_state(v: dict) -> str:
+    """Why a video from Invidious can't be played as a clip yet, or ""."""
+    if v.get("liveNow"):
+        return "live"
+    if v.get("isUpcoming"):
+        return "upcoming"
+    if (v.get("lengthSeconds") or 0) <= 0:
+        return "processing"
+    return ""
 
 
 def video_id_from_url(url: str) -> str | None:

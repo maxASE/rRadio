@@ -51,7 +51,7 @@ def _add_media(z: zipfile.ZipFile, paths: list[Path]) -> None:
 
 
 def export_channel(cfg: Config, ch: Channel) -> bytes:
-    used = lambda s: ch.wants(s.id)  # noqa: E731
+    used = lambda s: ch.wants(s)  # noqa: E731
     doc = {
         "rradio_export": FORMAT,
         "channel": dump(Config(channels=[ch]))["channels"][0],
@@ -112,11 +112,11 @@ def _media_members(z: zipfile.ZipFile) -> list[tuple[zipfile.ZipInfo, str]]:
     return [(i, i.filename.removeprefix("media/")) for i in z.infolist() if i.filename.startswith("media/") and not i.is_dir()]
 
 
-def _clashes(z: zipfile.ZipFile) -> bool:
+def _clashes(z: zipfile.ZipFile, prefix: str = "") -> bool:
     """Would any file land on an existing file with other content?"""
     for i, rel in _media_members(z):
         try:
-            dest = media.resolve(rel)
+            dest = media.resolve(prefix + rel)
         except ValueError:
             continue
         if dest.exists() and (dest.stat().st_size != i.file_size or dest.read_bytes() != z.read(i)):
@@ -150,7 +150,9 @@ def _unique(want: str, taken: set[str], sep: str) -> str:
     return f"{want}{sep}{k}"
 
 
-def import_channel(cfg: Config, z: zipfile.ZipFile, name: str = "") -> tuple[Config, str]:
+def import_channel(cfg: Config, z: zipfile.ZipFile, name: str = "", owner: str = "", folder: str = "") -> tuple[Config, str]:
+    """Adds the channel (owned by `owner`, a user id; "" = the admin). A user's
+    import puts its own audio under their `folder` (e.g. users/anna/)."""
     doc = yaml.safe_load(z.read("channel.yaml")) or {}
     if doc.get("rradio_export") != FORMAT:
         raise ValueError("unknown export format")
@@ -161,18 +163,19 @@ def import_channel(cfg: Config, z: zipfile.ZipFile, name: str = "") -> tuple[Con
     for key, match in (("video", "channel_id"), ("podcasts", "url")):
         mine = data[key]
         for s in doc.get(key) or []:
-            same = next((x for x in mine if x[match] == s.get(match)), None)
+            same = next((x for x in mine if x[match] == s.get(match) and x.get("owner", "") == owner), None)
             if same:
                 remap[s["id"]] = same["id"]
             else:
                 nid = new_id() if any(x["id"] == s.get("id") for x in mine) or not s.get("id") else s["id"]
                 remap[s.get("id")] = nid
-                mine.append({**s, "id": nid})
+                mine.append({**s, "id": nid, "owner": owner})
                 added += 1
 
     ch = dict(doc["channel"])
     ch["name"] = _unique((name or ch.get("name") or "Imported").strip(), {c["name"] for c in data["channels"]}, " ")
     ch["id"] = new_id()
+    ch["owner"], ch["public"] = owner, False
     ch["mount"] = _unique(re.sub(r"[^a-z0-9_-]+", "-", ch["name"].lower()).strip("-")[:28] or ch["id"],
                           {c["mount"] for c in data["channels"]}, "-")
     ids = {}
@@ -180,15 +183,20 @@ def import_channel(cfg: Config, z: zipfile.ZipFile, name: str = "") -> tuple[Con
         for x in ch.get(key) or []:
             ids[x.get("id")] = x["id"] = new_id()
     ch["current_station"] = ids.get(ch.get("current_station"))
-    ch["sources"] = [remap.get(s, s) for s in ch.get("sources") or []]
+    if ch.get("all_sources", True):  # older exports: every source that came with it
+        ch["sources"] = [remap.get(s.get("id"), s.get("id")) for key in ("video", "podcasts") for s in doc.get(key) or []]
+    else:
+        ch["sources"] = [remap.get(s, s) for s in ch.get("sources") or []]
+    ch["all_sources"] = False
 
     Config.model_validate({**data, "channels": [*data["channels"], ch]})  # fail before writing files
     # Own audio keeps its paths, unless a file there differs: then the whole
     # import goes into a folder named after the channel, so spots that play a
     # folder don't mix in this instance's files.
-    prefix = ""
-    if _clashes(z):
-        prefix = _unique(ch["mount"], {p.name for p in media.MEDIA_DIR.glob("*")}, "-") + "/"
+    prefix = folder
+    if _clashes(z, prefix):
+        prefix += _unique(ch["mount"], {p.name for p in (media.MEDIA_DIR / prefix).glob("*")}, "-") + "/"
+    if prefix:
         for s in ch.get("spots") or []:
             s["files"] = [prefix + f for f in s.get("files") or []]
     nfiles = _write_media(z, prefix)
@@ -221,12 +229,15 @@ class NeedsConfirm(Exception):
     """A full backup replaces everything; the caller has to say so."""
 
 
-def import_zip(cfg: Config, data: bytes, name: str, config_path: Path, replace: bool = False) -> tuple[Config, str]:
+def import_zip(cfg: Config, data: bytes, name: str, config_path: Path, replace: bool = False,
+               owner: str = "", folder: str = "") -> tuple[Config, str]:
     z = _open(data)
     names = set(z.namelist())
     if "channel.yaml" in names:
-        return import_channel(cfg, z, name)
+        return import_channel(cfg, z, name, owner, folder)
     if "config.yaml" in names:
+        if owner:
+            raise ValueError("only the admin can restore a full backup")
         if not replace:
             raise NeedsConfirm("This is a full backup. Restoring it replaces all channels, sources and settings.")
         return restore_all(cfg, z, config_path)

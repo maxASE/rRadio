@@ -125,11 +125,18 @@ input, select {
   background: var(--bg); color: var(--text); min-width: 0; min-height: 40px;
 }
 input[type=checkbox], input[type=radio] { min-height: 0; }
-select { width: auto; }
+/* Own arrow, so it sits inside the padding instead of against the edge. */
+select {
+  width: auto; padding-right: 36px; appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a857c' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 14px center; background-size: 12px 8px;
+}
 input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 label.field { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: .85rem; }
 label.field input { color: var(--text); font-size: 15px; }
 label.check { display: flex; align-items: center; gap: 8px; }
+/* A long label must not squeeze its box into a dot. */
+label.check > input[type=checkbox], label.check > input[type=radio] { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
 label.inline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
 .chip, .chips-nav a {
@@ -152,6 +159,7 @@ label.inline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .badge.playing, .badge.started { color: var(--accent); border-color: var(--accent); }
 .badge.failed, .badge.skipped { color: var(--bad); border-color: var(--bad); }
 .badge.played, .badge.ready { color: var(--ok); border-color: var(--ok); }
+.badge.waiting { color: var(--clip); border-color: var(--clip); }
 
 /* lists */
 .list { list-style: none; margin: 0; padding: 0; }
@@ -170,6 +178,22 @@ label.inline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 /* home */
 .channel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; margin-bottom: 20px; }
 .channel-grid .card { margin: 0; }
+.channel-grid .grid-head { grid-column: 1 / -1; margin: 8px 0 -8px; }
+.owner-tag { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+.owner-tag.public { color: var(--accent-ink); background: var(--accent-soft); border-color: var(--accent-line); }
+
+/* Accounts: users don't see admin things; others' public channels are listen-only. */
+body.is-user .admin-only, body:not(.is-user) .user-only, body:not(.readonly) .readonly-only,
+body.readonly .edit-only, body.readonly :is(#queue, #why, #programs, #spots, #tl-pop) button,
+body.readonly :is(#programs, #spots) input, body.readonly #station-chips .add-link { display: none !important; }
+body.readonly #station-chips { pointer-events: none; }
+.readonly-note { padding: 10px 14px; border-radius: 8px; background: var(--accent-soft); color: var(--accent-ink); border: 1px solid var(--accent-line); }
+.user-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.add-user { margin-top: 20px; }
+.add-user-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(120px, auto) auto; gap: 12px 16px; align-items: end; }
+.add-user-fields input, .add-user-fields select { width: 100%; }
+.paired-head { margin-top: 28px; }
+@media (max-width: 700px) { .add-user-fields { grid-template-columns: 1fr; } .add-user-fields button { justify-self: start; } }
 .channel-card { display: flex; flex-direction: column; gap: 12px; }
 .card-title { font-size: 1.15rem; font-weight: 700; color: var(--text); text-decoration: none; }
 .card-title:hover { color: var(--accent); }
@@ -298,7 +322,7 @@ button.listen.playing { background: var(--accent); color: var(--accent-text); }
 .chips label { display: inline-flex; align-items: center; gap: 6px; font-size: .9rem; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; }
 .chips input { margin: 0; }
 .table-box { padding: 0; overflow-x: auto; }
-table.sources { width: 100%; min-width: 760px; border-collapse: collapse; font-size: .92rem; }
+table.sources { width: 100%; min-width: 640px; border-collapse: collapse; font-size: .92rem; }
 table.sources th { text-align: left; color: var(--muted); font-weight: 600; padding: 14px 12px; white-space: nowrap; }
 table.sources th.center { text-align: center; }
 table.sources td { padding: 12px; border-top: 1px solid var(--line); vertical-align: middle; }
@@ -311,7 +335,6 @@ table.sources .empty { color: var(--muted); padding: 20px; }
 .sdot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--ok); }
 .sdot.bad { background: var(--bad); }
 .sdot.off { background: var(--radio); }
-.big-check { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; }
 #media .folder-head { font-weight: 600; padding-top: 14px; }
 
 /* settings */
@@ -395,6 +418,11 @@ fieldset.formats input { margin-top: 3px; }
 #voice-audio { width: 100%; }
 #btn-voice-rec.recording { background: var(--bad); border-color: var(--bad); }
 .voice-time { font-variant-numeric: tabular-nums; }
+
+/* A channel's sources: one row per source, its type on the right. */
+.source-ticks { display: flex; flex-direction: column; }
+.source-ticks label.check { min-height: 40px; border-top: 1px solid var(--line); }
+.source-ticks label.check:first-child { border-top: 0; }
 
 /* Radio Browser search results in the add-station form */
 .rb-country { width: 10em; }

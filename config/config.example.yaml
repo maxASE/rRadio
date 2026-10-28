@@ -8,6 +8,7 @@ settings:
   invidious_url: http://host.docker.internal:3000
   poll_minutes: 10               # how often to look for new videos and episodes
   max_age_hours: 48              # ignore items published longer ago (0 = no limit)
+  live_wait_hours: 24            # keep trying lives and failed video downloads this long
   ytdlp_fallback: false          # Fetch from the video site directly if Invidious fails
   video_audio: small           # small (Opus ~70 kbps) or aac (128 kbps)
   streams: [mp3]                 # any of: mp3, aac, opus
@@ -95,6 +96,7 @@ video:
     channel_id: UCxxxxxxxxxxxxxxxxxxxxxx   # the web UI finds this from an @handle
     enabled: true
     min_minutes: 1      # skip very short videos
+    lives: true         # also play lives once Invidious can (after they end)
     max_minutes: 90
     include: ""         # regex; only titles that match
     exclude: "live|trailer"

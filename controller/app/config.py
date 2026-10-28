@@ -155,7 +155,11 @@ class VideoChannel(Filters):
     name: str
     channel_id: str
     enabled: bool = True
+    owner: str = ""  # id of the user who added it; "" = the admin
     min_minutes: float = 1  # skips very short videos by default
+    # Also watch the channel's Live tab. Lives wait until Invidious can play the
+    # recording (usually a few hours after they end), then cut in.
+    lives: bool = True
 
 
 class Podcast(Filters):
@@ -163,6 +167,7 @@ class Podcast(Filters):
     name: str
     url: str
     enabled: bool = True
+    owner: str = ""
 
 
 class Spot(BaseModel):
@@ -234,6 +239,8 @@ class Settings(BaseModel):
     poll_minutes: float = 10
     max_age_hours: float = 48
     ytdlp_fallback: bool = False
+    # How long lives and failed video downloads keep being retried before they are dropped.
+    live_wait_hours: float = 24
     # Audio format fetched from Invidious: "small" = Opus ~70 kbps (itag 250),
     # about half the size of "aac" = AAC 128 kbps (itag 140), so it downloads faster.
     video_audio: Literal["small", "aac"] = "small"
@@ -287,8 +294,13 @@ class Channel(BaseModel):
     """One radio stream of its own, e.g. one per family member.
 
     It plays at /<mount>.mp3 (and .aac/.opus), with its own stations,
-    programs and spots. It cuts in new items from every video channel and
-    podcast, or only from those listed in `sources` when `all_sources` is off.
+    programs and spots. It cuts in new items from the video channels and
+    podcasts listed in `sources` (the ticks under Sources). `all_sources` is
+    from older configs: it is turned into a list of all the owner's sources
+    when the config loads.
+
+    `owner` is the id of the user it belongs to ("" = the admin). A `public`
+    channel shows up for every user, who can listen but not change it.
     """
 
     id: str = Field(default_factory=new_id)
@@ -300,6 +312,8 @@ class Channel(BaseModel):
     spots: list[Spot] = Field(default_factory=list)
     all_sources: bool = True
     sources: list[str] = Field(default_factory=list)
+    owner: str = ""
+    public: bool = False
 
     @model_validator(mode="after")
     def _check(self) -> "Channel":
@@ -315,8 +329,8 @@ class Channel(BaseModel):
     def station(self) -> Station | None:
         return next((s for s in self.stations if s.id == self.current_station), None)
 
-    def wants(self, source_id: str) -> bool:
-        return self.all_sources or source_id in self.sources
+    def wants(self, src: "VideoChannel | Podcast") -> bool:
+        return (self.all_sources and src.owner == self.owner) or src.id in self.sources
 
 
 def _migrate(data: dict) -> dict:
@@ -346,6 +360,16 @@ class Config(BaseModel):
             dup = {x for x in seen if seen.count(x) > 1}
             if dup:
                 raise ValueError(f"two channels use the same {'stream name' if attr == 'mount' else 'id'}: {', '.join(dup)}")
+        return self
+
+    @model_validator(mode="after")
+    def _explicit_sources(self) -> "Config":
+        """"Every source" became plain ticks: one place decides what cuts in."""
+        for c in self.channels:
+            if c.all_sources:
+                ids = [s.id for s in self.video + self.podcasts if s.owner == c.owner]
+                c.sources = list(dict.fromkeys([*c.sources, *ids]))
+                c.all_sources = False
         return self
 
     def channel(self, cid: str | None) -> Channel | None:

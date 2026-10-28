@@ -13,6 +13,9 @@ let channelId = null;
 try { channelId = localStorage.getItem("channel"); } catch {}
 let view = "home";
 let sourceFilter = "all";
+// Who is logged in: the admin (or anyone, without a UI password) or a user with own channels.
+let me = { admin: true, user: null, admin_name: "admin" };
+let userList = null; // the admin's list of users, loaded on demand
 let openSource = null; // key of the source row whose editor is open
 
 // --- helpers -------------------------------------------------------------------
@@ -162,7 +165,18 @@ function spotMinutes(s, d) {
 
 // The channel being looked at.
 function channel() {
-  return cfg.channels.find((c) => c.id === channelId) || cfg.channels[0];
+  return cfg.channels.find((c) => c.id === channelId) || mine()[0] || cfg.channels[0];
+}
+
+// Channels this person may change: all for the admin, else their own.
+const canEdit = (c) => !!c && (me.admin || (!!me.user && c.owner === me.user.id));
+const mine = () => (cfg ? cfg.channels.filter(canEdit) : []);
+const ownsSource = (src) => me.admin || (!!me.user && src.owner === me.user.id);
+function ownerName(id) {
+  if (!id) return me.admin_name;
+  if (me.user && id === me.user.id) return me.user.name;
+  const u = (userList || []).find((x) => x.id === id);
+  return u ? u.name : status?.channels.find((c) => c.owner === id)?.owner_name || "another user";
 }
 
 async function saveConfig(msg = "Saved") {
@@ -198,7 +212,7 @@ function route() {
   $$(".view").forEach((s) => s.classList.toggle("active", s.id === `view-${view}`));
   $$("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === (view === "channel" ? "home" : view)));
   if (view === "sources" || view === "schedule") loadMedia();
-  if (view === "settings") loadDevices();
+  if (view === "settings") { loadDevices(); if (me.admin && me.login) loadUsers(); }
   else if (pairing) hidePairing();
   if (cfg) renderConfig();
   if (status) renderStatus();
@@ -321,6 +335,9 @@ const MODE_LABEL = {
   offline: "Audio engine offline",
 };
 const PILL = { station: "RADIO", program: "PROGRAM", cutin: "CUT-IN", silence: "WAITING", offline: "OFFLINE" };
+// Lives wait until Invidious can play them (see "waiting" in /api/status).
+const WAIT_BADGE = { live: "live", upcoming: "upcoming", processing: "processing" };
+const WAIT_TEXT = { live: "live now, cuts in once it is over", upcoming: "live soon, cuts in once it is over", processing: "The site is still processing the recording" };
 const KIND_NAME = { podcast: "Podcast", video: "Video", spot: "Spot", media: "Own media", inbox: "Inbox", url: "Link", program: "Program", voice: "Voice message" };
 
 function nowTitle(np) {
@@ -348,15 +365,15 @@ function renderStatus() {
   const multi = s.channels.length > 1;
   const title0 = s.station_name;
   $("#station-name").textContent = title0;
-  document.title = np.title || np.source ? `${nowTitle(np)} · ${multi ? s.channel.name : title0}` : title0;
+  document.title = s.channel && (np.title || np.source) ? `${nowTitle(np)} · ${multi ? s.channel.name : title0}` : title0;
   $("#live-dot").className = "dot " + (np.mode === "cutin" ? "cutin" : s.engine_up && np.mode !== "silence" ? "live" : "");
 
   // The player follows a renamed stream.
   if (listenCh && streamOf(listenCh) && streamOf(listenCh) !== listenSrc) startListening(listenCh);
 
   if (view === "home") renderHome();
-  if (view === "channel") renderChannelStatus();
-  if (view === "schedule") { renderTimeline(true); renderSpotMeta(); renderProgramMeta(); }
+  if (view === "channel" && s.channel) renderChannelStatus();
+  if (view === "schedule" && s.channel) { renderTimeline(true); renderSpotMeta(); renderProgramMeta(); }
   if (view === "sources") renderSourcesTable(true);
   updateListenButtons();
 }
@@ -479,33 +496,48 @@ function setArt(img, src) {
 }
 
 function renderHome() {
+  const own = status.channels.filter((c) => c.can_edit !== false);
+  const others = status.channels.filter((c) => c.can_edit === false);
+  const head = (text) => el("h3", { class: "grid-head" }, text);
   $("#channel-cards").replaceChildren(
-    ...status.channels.map((c) => {
-      const np = c.now || { mode: c.mode };
-      const { segs, ticks } = lookahead(c, np);
-      const nxt = c.next_program;
-      return el("article", { class: "card channel-card" },
-        el("div", { class: "row between" },
-          el("a", { href: `#/channel/${encodeURIComponent(c.id)}`, class: "card-title" }, c.name),
-          el("span", { class: `pill ${np.mode}` }, PILL[np.mode] || np.mode)),
-        el("div", { class: "cc-now" },
-          artImg(np.art, "cc-art"),
-          el("div", { class: "grow" },
-            el("div", { class: "cc-title" }, nowTitle(np)),
-            el("div", { class: "muted small" }, nowWhy(np)))),
-        el("div", { class: "strip", "aria-hidden": "true" },
-          ...segs.map((g) => el("i", { class: g.kind, style: `flex:${g.n}` })),
-          ...ticks.map((t) => el("b", { style: `left:${t}%` }))),
-        el("div", { class: "strip-scale", "aria-hidden": "true" }, el("span", {}, "now"), el("span", {}, "+3 h"), el("span", {}, "+6 h")),
-        el("div", { class: "muted small" }, nextProgramLine(c.windows, nxt, c.next_spot)),
-        el("div", { class: "row gap" },
-          el("button", { class: "listen", "data-listen": c.id }),
-          c.stream ? el("button", { onclick: () => copy(c.stream) }, "Copy link") : null,
-          el("span", { class: "muted small push" }, c.listeners == null ? "" : `${c.listeners} listening`)),
-      );
-    }),
+    ...(me.admin ? [] : [head("My channels")]),
+    ...(!me.admin && !own.length ? [el("p", { class: "muted grid-head" }, "No channels of your own yet. Make one with + New channel.")] : []),
+    ...own.map(channelCard),
+    ...(others.length ? [head("Public channels")] : []),
+    ...others.map(channelCard),
   );
+  renderIncoming();
+}
 
+function channelCard(c) {
+  const np = c.now || { mode: c.mode };
+  const { segs, ticks } = lookahead(c, np);
+  const nxt = c.next_program;
+  // Whose it is, for anyone else's channel; "Public" when others can listen.
+  const whose = c.owner && !(me.user && c.owner === me.user.id) ? `${c.owner_name || "a user"}'s` : "";
+  const tags = [whose && el("span", { class: "owner-tag" }, whose), c.public && el("span", { class: "owner-tag public" }, "Public")].filter(Boolean);
+  return el("article", { class: "card channel-card" },
+    el("div", { class: "row between" },
+      el("span", { class: "row gap" }, el("a", { href: `#/channel/${encodeURIComponent(c.id)}`, class: "card-title" }, c.name), ...tags),
+      el("span", { class: `pill ${np.mode}` }, PILL[np.mode] || np.mode)),
+    el("div", { class: "cc-now" },
+      artImg(np.art, "cc-art"),
+      el("div", { class: "grow" },
+        el("div", { class: "cc-title" }, nowTitle(np)),
+        el("div", { class: "muted small" }, nowWhy(np)))),
+    el("div", { class: "strip", "aria-hidden": "true" },
+      ...segs.map((g) => el("i", { class: g.kind, style: `flex:${g.n}` })),
+      ...ticks.map((t) => el("b", { style: `left:${t}%` }))),
+    el("div", { class: "strip-scale", "aria-hidden": "true" }, el("span", {}, "now"), el("span", {}, "+3 h"), el("span", {}, "+6 h")),
+    el("div", { class: "muted small" }, nextProgramLine(c.windows, nxt, c.next_spot)),
+    el("div", { class: "row gap" },
+      el("button", { class: "listen", "data-listen": c.id }),
+      c.stream ? el("button", { onclick: () => copy(c.stream) }, "Copy link") : null,
+      el("span", { class: "muted small push" }, c.listeners == null ? "" : `${c.listeners} listening`)),
+  );
+}
+
+function renderIncoming() {
   // New items, one row per clip with every channel it goes to.
   const byClip = new Map();
   for (const i of status.incoming || []) {
@@ -534,13 +566,13 @@ $("#btn-new-channel").addEventListener("click", () => {
 $("#form-channel").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const f = ev.target;
-  const first = cfg.channels[0];
+  const first = mine()[0];
   // Start with the first channel's stations, so the new one plays something right away.
   cfg.channels.push({
     name: f.name.value,
     mount: f.mount.value.trim().toLowerCase(),
     stations: first ? first.stations.map(({ id, ...s }) => s) : [],
-    programs: [], spots: [], all_sources: true, sources: [],
+    programs: [], spots: [], all_sources: false, sources: [],
   });
   f.reset();
   f.classList.add("hidden");
@@ -578,11 +610,12 @@ function renderChannelStatus() {
 
   // queue
   const queue = s.queue.filter((i) => i.state !== "playing");
-  $("#queue-count").textContent = queue.length ? `${queue.length} waiting` : "";
+  const later = s.waiting || [];
+  $("#queue-count").textContent = [queue.length ? `${queue.length} waiting` : "", later.length ? `${later.length} waiting to play` : ""].filter(Boolean).join(" · ");
   const held = np.mode === "program";
   $("#queue").replaceChildren(
-    ...(queue.length
-      ? queue.map((i) =>
+    ...(queue.length || later.length
+      ? [...queue.map((i) =>
           el("li", { class: "item-row" },
             el("div", { class: "grow" },
               el("div", { class: "title" }, i.title),
@@ -593,7 +626,18 @@ function renderChannelStatus() {
             el("span", { class: `badge ${i.state}` }, i.state === "downloading" && i.progress != null ? `${Math.round(i.progress * 100)}%` : i.state),
             ["waiting", "downloading", "ready", "failed"].includes(i.state)
               ? el("button", { class: "small-btn", title: "Remove", "aria-label": `Remove ${i.title}`, onclick: () => api(`/api/queue/${encodeURIComponent(i.key)}`, { method: "DELETE" }).then(refresh).catch((e) => toast(e.message, true)) }, "✕")
-              : null))
+              : null)),
+        ...later.map((w) =>
+          el("li", { class: "item-row" },
+            el("div", { class: "grow" },
+              el("div", { class: "title" }, w.title),
+              el("div", { class: "small muted" },
+                `Video · ${w.source} · ${WAIT_TEXT[w.reason] || w.reason} · next look ${new Date(w.next_check * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`)),
+            el("span", { class: "badge waiting" }, WAIT_BADGE[w.reason] || "retrying"),
+            el("button", { class: "small-btn", title: "Forget", "aria-label": `Forget ${w.title}`, onclick: () => {
+              if (!confirm(`Forget ${w.title} on every channel?`)) return;
+              api(`/api/waiting/${encodeURIComponent(w.key)}`, { method: "DELETE" }).then(refresh).catch((e) => toast(e.message, true));
+            } }, "✕")))]
       : [el("li", { class: "empty" }, "Nothing waiting.")]),
   );
 
@@ -759,21 +803,25 @@ function renderChannelSettings() {
   const c = channel();
   const name = el("input", { value: c.name, onchange: (e) => { c.name = e.target.value; saveConfig("Renamed"); } });
   const mount = el("input", { value: c.mount, title: "The stream plays at /<name>.mp3", onchange: (e) => { c.mount = e.target.value.trim().toLowerCase(); saveConfig("Stream renamed. The audio engine restarts for a moment."); } });
+  // The admin can hand a channel to a user (or take it back).
+  const owner = me.admin && userList && userList.length
+    ? el("label", { class: "field" }, "Belongs to",
+        el("select", { onchange: (e) => { c.owner = e.target.value; saveConfig(`${c.name} now belongs to ${ownerName(c.owner)}`); } },
+          el("option", { value: "", selected: !c.owner }, `${me.admin_name} (admin)`),
+          ...userList.map((u) => el("option", { value: u.id, selected: c.owner === u.id }, u.name))))
+    : null;
   $("#channel-settings").replaceChildren(
     el("label", { class: "field" }, "Name", name),
     el("label", { class: "field" }, "Stream name", mount),
     el("p", { class: "muted small" }, `Plays at /${c.mount}.mp3. Renaming the stream restarts the audio engine for a few seconds.`),
-    el("label", { class: "check" },
-      el("input", { type: "checkbox", checked: c.all_sources, onchange: (e) => {
-        c.all_sources = e.target.checked;
-        if (!c.all_sources && !c.sources.length) c.sources = [...cfg.video, ...cfg.podcasts].map((s) => s.id);
-        saveConfig();
-      } }),
-      "Cut in every video channel and podcast, including ones added later"),
+    ...(owner ? [owner] : []),
+    el("label", { class: "check small" },
+      el("input", { type: "checkbox", checked: !!c.public, onchange: (e) => { c.public = e.target.checked; saveConfig(c.public ? `${c.name} is public now` : `${c.name} is private now`); } }),
+      "Public: other users can listen, but not change it"),
     el("div", { class: "row gap" },
       el("a", { class: "button", href: `/api/channels/${encodeURIComponent(c.id)}/export`, title: "A zip with this channel's stations, programs, spots, sources, own audio and pictures, for Settings › Import on another rRadio" }, "Export channel"),
       el("button", {
-        class: "danger", disabled: cfg.channels.length < 2,
+        class: "danger", disabled: me.admin && cfg.channels.length < 2,
         onclick: () => {
           if (!confirm(`Remove the channel ${c.name} with its stations, programs and spots?`)) return;
           cfg.channels = cfg.channels.filter((x) => x !== c);
@@ -781,6 +829,24 @@ function renderChannelSettings() {
           saveConfig("Channel removed");
         },
       }, "Remove channel")),
+  );
+}
+
+// A channel's own ticks: on its page the stations it can play underneath, under
+// Schedule the video channels and podcasts that cut in. Sources only says how
+// many channels use each one.
+function renderSourceTicks(box, count, types, empty) {
+  const c = channel();
+  if (!c || !canEdit(c)) return;
+  const rows = sourceRows().filter((r) => types.includes(r.type));
+  const used = rows.filter((r) => usesSource(c, r)).length;
+  $(count).textContent = rows.length ? `${used} of ${rows.length}` : "";
+  $(box).replaceChildren(
+    ...(rows.length ? [el("div", { class: "source-ticks" }, ...rows.map((r) => el("label", { class: "check" },
+      el("input", { type: "checkbox", checked: usesSource(c, r), onchange: (e) => setUses(c, r, e.target.checked) }),
+      el("span", { class: "grow" }, r.name),
+      el("span", { class: "muted small" }, TYPE_NAME[r.type]))))] : [el("p", { class: "muted small" }, empty)]),
+    el("a", { class: "small", href: `#/sources/${types[0]}` }, rows.length ? "Add or edit sources" : "Add one under Sources"),
   );
 }
 
@@ -1420,7 +1486,7 @@ $("#form-spot").addEventListener("submit", async (ev) => {
 function sourceRows() {
   const rows = [];
   const stations = new Map();
-  for (const c of cfg.channels) {
+  for (const c of mine()) {
     for (const s of c.stations) {
       const k = baseKey(s);
       if (!stations.has(k)) stations.set(k, { key: k, type: s.kind === "navidrome" ? "navidrome" : "station", name: s.name, base: s, copies: [] });
@@ -1453,19 +1519,14 @@ function setUses(c, row, on) {
     }
     return saveConfig(on ? `${row.name} added to ${c.name}` : `${row.name} removed from ${c.name}`);
   }
-  if (c.all_sources) {
-    c.all_sources = false;
-    c.sources = row.allIds.filter((x) => x !== row.src.id);
-  } else {
-    c.sources = on ? [...new Set([...c.sources, row.src.id])] : c.sources.filter((x) => x !== row.src.id);
-  }
+  c.sources = on ? [...new Set([...c.sources, row.src.id])] : c.sources.filter((x) => x !== row.src.id);
   return saveConfig(on ? `${c.name} now cuts in ${row.name}` : `${c.name} no longer cuts in ${row.name}`);
 }
 
 function sourceLatest(row) {
   if (row.type === "station" || row.type === "navidrome") {
     const on = row.copies.filter(({ c, s }) => c.current_station === s.id).map(({ c }) => c.name);
-    const progs = cfg.channels.flatMap((c) => c.programs.filter((p) => baseKey(p) === row.key).map((p) => `${p.name} on ${c.name}`));
+    const progs = mine().flatMap((c) => c.programs.filter((p) => baseKey(p) === row.key).map((p) => `${p.name} on ${c.name}`));
     const parts = [on.length ? `Station on ${on.join(", ")}` : "", progs.length ? `Program: ${progs.join(", ")}` : ""].filter(Boolean);
     return { text: parts.length ? parts.join(" · ") : "Not picked on any channel", state: "ok" };
   }
@@ -1490,8 +1551,7 @@ function renderSources() {
   $("#media-card").classList.toggle("hidden", !(media || sourceFilter === "all"));
   $("#source-head").replaceChildren(
     el("tr", {},
-      el("th", {}, "Source"), el("th", {}, "Type"), el("th", {}, "Latest"),
-      ...cfg.channels.map((c) => el("th", { class: "center" }, c.name)),
+      el("th", {}, "Source"), el("th", {}, "Type"), el("th", {}, "Latest"), el("th", {}, "Used on"),
       el("th", {}, el("span", { class: "sr" }, "Actions"))),
   );
   renderSourcesTable();
@@ -1501,7 +1561,7 @@ function renderSources() {
 function renderSourcesTable(refresh = false) {
   if (!cfg || view !== "sources") return;
   const rows = sourceRows().filter((r) => sourceFilter === "all" || r.type === sourceFilter);
-  const cols = cfg.channels.length + 4;
+  const cols = 5;
   const trs = [];
   for (const r of rows) {
     const latest = sourceLatest(r);
@@ -1511,12 +1571,13 @@ function renderSourcesTable(refresh = false) {
         el("div", { class: "src-name" },
           el("span", { class: `sdot ${latest.state}`, "aria-hidden": "true" }),
           artImg(previewOf(r.base?.image), "src-art"),
-          el("div", {}, el("strong", {}, r.name), el("div", { class: "muted small ellipsis" }, detail),
+          el("div", {}, el("strong", {}, r.name),
+            me.admin && r.src?.owner ? el("span", { class: "owner-tag" }, `${ownerName(r.src.owner)}'s`) : null,
+            el("div", { class: "muted small ellipsis" }, detail),
             r.base?.image && status?.image_errors?.[r.base.image] ? el("div", { class: "small bad" }, `Logo didn't load: ${status.image_errors[r.base.image]}`) : null))),
       el("td", { class: "muted" }, TYPE_NAME[r.type]),
       el("td", { class: "muted small latest" }, latest.state === "bad" ? el("span", { class: "bad" }, latest.text) : latest.text, latest.checked ? el("div", {}, latest.checked) : null),
-      ...cfg.channels.map((c) => el("td", { class: "center" },
-        el("input", { type: "checkbox", class: "big-check", checked: usesSource(c, r), "aria-label": `Use ${r.name} on ${c.name}`, onchange: (e) => setUses(c, r, e.target.checked) }))),
+      usedOnCell(r),
       el("td", { class: "right" }, el("button", { class: "small-btn", "aria-expanded": openSource === r.key ? "true" : "false", onclick: () => { openSource = openSource === r.key ? null : r.key; renderSourcesTable(); } }, openSource === r.key ? "Close" : "Edit")),
     ));
     if (openSource === r.key) trs.push(el("tr", { class: "editor-row" }, el("td", { colspan: cols }, sourceEditor(r))));
@@ -1532,6 +1593,21 @@ function renderSourcesTable(refresh = false) {
     return;
   }
   box.replaceChildren(...(trs.length ? trs : [el("tr", {}, el("td", { colspan: cols, class: "empty" }, "Nothing here yet. Add one with + Add source."))]));
+}
+
+// "3 channels", with the names on hover; the ticks themselves are on each channel's page.
+function usedOnCell(r) {
+  const names = mine().filter((c) => usesSource(c, r)).map((c) => c.name);
+  if (!names.length) return el("td", { class: "muted small" }, "Not used");
+  return el("td", { class: "small", title: names.join(", ") }, names.length === 1 ? names[0] : `${names.length} channels`);
+}
+
+// Links to the channels using a source, where it is ticked or unticked.
+function usedOnLinks(r) {
+  const on = mine().filter((c) => usesSource(c, r));
+  const links = on.flatMap((c, i) => [i ? ", " : "", el("a", { href: `#/channel/${encodeURIComponent(c.id)}` }, c.name)]);
+  return el("p", { class: "muted small" }, ...(on.length ? ["Used on ", ...links, ". "] : ["Not used on any channel yet. "]),
+    r.type === "video" || r.type === "podcast" ? "Tick or untick it on a channel's Schedule page." : "Tick or untick it on a channel's page.");
 }
 
 function sourceEditor(r) {
@@ -1563,25 +1639,33 @@ function sourceEditor(r) {
         } }, "Save"),
         el("button", { class: "small-btn danger", onclick: () => {
           if (!confirm(`Remove ${r.name} from every channel?`)) return;
-          for (const c of cfg.channels) c.stations = c.stations.filter((s) => baseKey(s) !== r.key);
+          for (const c of mine()) c.stations = c.stations.filter((s) => baseKey(s) !== r.key);
           openSource = null;
           saveConfig("Station removed");
         } }, "Remove everywhere")),
-      el("p", { class: "muted small" }, "Changes apply to this station on every channel that has it."));
+      el("p", { class: "muted small" }, "Changes apply to this station on every channel that has it."),
+      usedOnLinks(r));
   }
   const src = r.src;
   const kind = r.type;
+  const owned = ownsSource(src);
   const num = (k, label, step) => el("label", {}, label, el("input", { type: "number", min: 0, step, value: src[k], "data-k": k }));
   const txt = (k, label, ph) => el("label", {}, label, el("input", { value: src[k], placeholder: ph, "data-k": k }));
   const box = el("div", { class: "stack" },
-    el("label", { class: "check" }, el("input", { type: "checkbox", checked: src.enabled, onchange: (e) => { src.enabled = e.target.checked; saveConfig(src.enabled ? "Enabled" : "Paused"); } }), "Check this source for new items"),
-    el("div", { class: "filters" },
+    owned ? null : el("p", { class: "muted small" }, `Added by ${ownerName(src.owner)}, so only they can change its filters or remove it.`),
+    usedOnLinks(r),
+    el("label", { class: "check" + (owned ? "" : " hidden") }, el("input", { type: "checkbox", checked: src.enabled, onchange: (e) => { src.enabled = e.target.checked; saveConfig(src.enabled ? "Enabled" : "Paused"); } }), "Check this source for new items"),
+    el("div", { class: "filters" + (owned ? "" : " hidden") },
       num("min_minutes", "Min minutes", 0.5),
       num("max_minutes", "Max minutes", 1),
       txt("include", "Only titles matching", "e.g. news|update"),
       txt("exclude", "Skip titles matching", "e.g. live|trailer")),
+    kind === "video"
+      ? el("label", { class: "check" + (owned ? "" : " hidden") }, el("input", { type: "checkbox", checked: src.lives !== false, onchange: (e) => { src.lives = e.target.checked; saveConfig(src.lives ? "Lives are watched" : "Lives are ignored"); } }),
+          "Also play lives once they're over (they wait until Invidious can play the recording)")
+      : null,
     el("div", { class: "row gap" },
-      el("button", { class: "small-btn primary", onclick: () => {
+      el("button", { class: "small-btn primary" + (owned ? "" : " hidden"), onclick: () => {
         for (const i of $$("[data-k]", box)) src[i.dataset.k] = i.type === "number" ? Number(i.value || 0) : i.value;
         saveConfig("Filters saved");
       } }, "Save filters"),
@@ -1592,7 +1676,7 @@ function sourceEditor(r) {
           refresh();
         } catch (e) { toast(e.message, true); }
       } }, `Play latest on ${channel().name}`),
-      el("button", { class: "small-btn danger", onclick: () => {
+      el("button", { class: "small-btn danger" + (owned ? "" : " hidden"), onclick: () => {
         if (!confirm(`Remove ${src.name}?`)) return;
         if (kind === "video") cfg.video = cfg.video.filter((x) => x !== src);
         else cfg.podcasts = cfg.podcasts.filter((x) => x !== src);
@@ -1618,10 +1702,15 @@ function showAddKind(k) {
   $$("[data-hint]", f).forEach((p) => p.classList.toggle("hidden", p.dataset.hint !== k));
   $("[data-search]", f).classList.toggle("hidden", nd);
   if (nd) fillPlaylists(f.playlist);
-  $(".chips", f).replaceChildren(
-    el("span", { class: "muted small" }, "Add to:"),
-    ...cfg.channels.map((c) => el("label", {}, el("input", { type: "checkbox", value: c.id, checked: c.id === channel().id }), c.name)),
-  );
+  // Stations go to the channel being looked at; new video channels and podcasts to all of them.
+  const form = $(`#add-source form:not(.hidden)`);
+  const ticks = form && $("[data-channel-ticks]", form);
+  if (ticks) {
+    ticks.replaceChildren(
+      el("span", { class: "muted small" }, k === "video" || k === "podcast" ? "Cut into:" : "Add to:"),
+      ...mine().map((c) => el("label", {}, el("input", { type: "checkbox", value: c.id, checked: k === "video" || k === "podcast" || c.id === channel()?.id }), c.name)),
+    );
+  }
 }
 $$("#add-kind button").forEach((b) => b.addEventListener("click", () => showAddKind(b.dataset.kind)));
 $("#btn-add-source").addEventListener("click", () => {
@@ -1774,6 +1863,19 @@ $("#form-station").addEventListener("submit", async (ev) => {
   saveConfig(image ? "Station added, with its logo" : "Station added");
 });
 
+// A new video channel or podcast, ticked on the channels picked in its add form.
+function tickInto(form, src) {
+  src.id = Math.random().toString(16).slice(2, 10).padEnd(8, "0");
+  const targets = $$("[data-channel-ticks] input:checked", form).map((i) => i.value);
+  const names = [];
+  for (const c of cfg.channels) {
+    if (!targets.includes(c.id)) continue;
+    c.sources = [...c.sources, src.id];
+    names.push(c.name);
+  }
+  return { src, msg: names.length ? `Added ${src.name}. It cuts into ${names.join(", ")}.` : `Added ${src.name}. Tick the channels it should cut into.` };
+}
+
 $("#form-video").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const f = ev.target;
@@ -1782,9 +1884,10 @@ $("#form-video").addEventListener("submit", async (ev) => {
   try {
     const ch = await api("/api/video/resolve", { method: "POST", body: { query: f.query.value } });
     if (cfg.video.some((c) => c.channel_id === ch.channel_id)) throw new Error(`${ch.name} is already in the list`);
-    cfg.video.push({ name: ch.name, channel_id: ch.channel_id, enabled: true });
-    f.reset();
-    await saveConfig(`Added ${ch.name}. Tick the channels it should cut into.`);
+    const into = tickInto(f, { name: ch.name, channel_id: ch.channel_id, enabled: true });
+    cfg.video.push(into.src);
+    f.query.value = "";
+    await saveConfig(into.msg);
   } catch (e) { toast(e.message, true); }
   btn.disabled = false;
 });
@@ -1796,9 +1899,10 @@ $("#form-podcast").addEventListener("submit", async (ev) => {
   btn.disabled = true;
   try {
     const { name } = await api("/api/podcast/resolve", { method: "POST", body: { query: f.url.value } });
-    cfg.podcasts.push({ name: name || f.url.value, url: f.url.value, enabled: true });
-    f.reset();
-    await saveConfig(`Added ${name || "podcast"}. Tick the channels it should cut into.`);
+    const into = tickInto(f, { name: name || f.url.value, url: f.url.value, enabled: true });
+    cfg.podcasts.push(into.src);
+    f.url.value = "";
+    await saveConfig(into.msg);
   } catch (e) { toast(`Couldn't read that feed: ${e.message}`, true); }
   btn.disabled = false;
 });
@@ -1884,6 +1988,7 @@ $("#form-settings").addEventListener("submit", (ev) => {
     invidious_url: f.invidious_url.value,
     poll_minutes: Number(f.poll_minutes.value),
     max_age_hours: Number(f.max_age_hours.value),
+    live_wait_hours: Number(f.live_wait_hours.value),
     ytdlp_fallback: f.ytdlp_fallback.checked,
     video_audio: f.video_audio.value,
     cache_in_ram: f.cache_in_ram.checked,
@@ -2027,6 +2132,13 @@ function channelNames(ids) {
 }
 
 function renderPairChannels() {
+  const who = $("#form-pair").user;
+  if (me.admin) {
+    const was = who.value;
+    who.replaceChildren(el("option", { value: "" }, "You (admin)"), ...(userList || []).map((u) => el("option", { value: u.id }, u.name)));
+    who.value = (userList || []).some((u) => u.id === was) ? was : "";
+    $("[data-pair-role]").hidden = !!who.value;
+  }
   const box = $("[data-pair-channels]");
   const ticked = new Set($$("input:checked", box).map((i) => i.value));
   box.replaceChildren(...cfg.channels.map((c) =>
@@ -2048,11 +2160,12 @@ async function loadDevices() {
         el("option", { value: "member" }, "Listen and control"),
         el("option", { value: "admin" }, "Everything"));
       role.value = d.role;
+      const whose = me.admin && d.user_id ? `${ownerName(d.user_id)}'s · ` : "";
       return el("div", { class: "device-row" },
         el("div", { class: "grow" },
           el("strong", {}, d.name),
-          el("div", { class: "small muted" }, `${channelNames(d.channels)} · last used ${d.last_seen ? fmtAgo(d.last_seen) : "never"}`)),
-        role,
+          el("div", { class: "small muted" }, `${whose}${channelNames(d.channels)} · last used ${d.last_seen ? fmtAgo(d.last_seen) : "never"}`)),
+        me.admin && !d.user_id ? role : null,
         el("button", { type: "button", class: "small-btn", onclick: () => {
           if (!confirm(`Remove ${d.name}? The app stops working until it is paired again.`)) return;
           api(`/api/devices/${d.id}`, { method: "DELETE" }).then(() => { toast("Removed"); loadDevices(); }).catch((e) => toast(e.message, true));
@@ -2084,7 +2197,7 @@ $("#form-pair").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const f = ev.target;
   const body = {
-    name: f.name.value, role: f.role.value, server: location.origin,
+    name: f.name.value, role: f.user.value ? "member" : f.role.value, user: f.user.value, server: location.origin,
     channels: $$("[data-pair-channels] input:checked").map((i) => i.value),
   };
   try {
@@ -2103,9 +2216,69 @@ $("#form-pair").addEventListener("submit", async (ev) => {
   }
 });
 
+$("#form-pair").user.addEventListener("change", (e) => { $("[data-pair-role]").hidden = !!e.target.value; });
+
 $("#btn-pair-cancel").addEventListener("click", () => {
   if (pairing) api(`/api/devices/pair/${pairing.code}`, { method: "DELETE" }).catch(() => {});
   hidePairing();
+});
+
+// --- users and your account -------------------------------------------------------------
+
+async function loadUsers() {
+  const data = await api("/api/users").catch((e) => { toast(e.message, true); return null; });
+  if (!data) return;
+  userList = data.users;
+  $("#users-warning").hidden = data.password_set;
+  $("#users-list").replaceChildren(
+    ...(userList.length
+      ? userList.map((u) => {
+          const role = el("select", { "aria-label": `Role of ${u.name}`, onchange: (e) =>
+            api(`/api/users/${u.id}`, { method: "PATCH", body: { role: e.target.value } })
+              .then(() => { toast("Saved"); loadUsers(); }).catch((err) => { toast(err.message, true); loadUsers(); }) },
+            el("option", { value: "user" }, "User"),
+            el("option", { value: "admin" }, "Admin"));
+          role.value = u.role;
+          const chans = u.channels.length ? u.channels.map((c) => c.name + (c.public ? " (public)" : "")).join(", ") : "no channels yet";
+          return el("div", { class: "user-row" },
+            el("div", { class: "grow" },
+              el("strong", {}, u.name),
+              el("div", { class: "small muted" }, `${chans} · ${plural(u.devices, "app")} · files in ${u.folder}`)),
+            role,
+            el("button", { type: "button", class: "small-btn", onclick: () => {
+              const pw = prompt(`New password for ${u.name} (8+ characters). They are logged out everywhere.`);
+              if (!pw) return;
+              api(`/api/users/${u.id}`, { method: "PATCH", body: { password: pw } }).then(() => toast("Password changed")).catch((e) => toast(e.message, true));
+            } }, "New password"),
+            el("button", { type: "button", class: "small-btn danger", onclick: () => {
+              if (!confirm(`Remove ${u.name}? Their apps stop working. Their channels become yours (private), so nothing stops playing.`)) return;
+              api(`/api/users/${u.id}`, { method: "DELETE" }).then(() => { toast("Removed"); loadUsers(); loadConfig(); }).catch((e) => toast(e.message, true));
+            } }, "Remove"));
+        })
+      : [el("p", { class: "muted small" }, "No users yet.")]),
+  );
+  if (cfg) renderConfig();
+}
+
+$("#form-user").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  try {
+    const u = await api("/api/users", { method: "POST", body: { name: f.name.value.trim().toLowerCase(), password: f.password.value, role: f.role.value } });
+    toast(`Added ${u.name}. They log in on this page with their name and password.`);
+    f.reset();
+    loadUsers();
+  } catch (e) { toast(e.message, true); }
+});
+
+$("#form-password").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  try {
+    await api("/api/me/password", { method: "POST", body: { old: f.old.value, new: f.new.value } });
+    toast("Password changed. Other browsers are logged out.");
+    f.reset();
+  } catch (e) { toast(e.message, true); }
 });
 
 // --- config ------------------------------------------------------------------------------
@@ -2113,21 +2286,29 @@ $("#btn-pair-cancel").addEventListener("click", () => {
 function renderConfig() {
   const ch = channel();
   channelId = ch ? ch.id : null;
+  const ro = !!ch && !canEdit(ch) && (view === "channel" || view === "schedule");
+  document.body.classList.toggle("readonly", ro);
+  $$("[data-readonly-note]").forEach((e) => (e.textContent = ro
+    ? `${ch.name} is ${ownerName(ch.owner)}'s public channel. You can listen and see what's on, but only ${ownerName(ch.owner)} can change it.`
+    : ""));
+  if (!ch && (view === "channel" || view === "schedule")) { location.hash = "#/home"; return; }
   $$("[data-channel-name]").forEach((e) => (e.textContent = ch ? ch.name : ""));
   $$("[data-week]").forEach((a) => (a.href = `#/schedule/${encodeURIComponent(channelId)}`));
   if (view === "channel") {
     renderChannelChips($("#channel-chips"), "channel");
     renderStationChips();
     renderChannelSettings();
+    renderSourceTicks("#channel-sources", "#channel-sources-count", ["station", "navidrome"], "No stations yet.");
   }
   if (view === "schedule") {
     renderChannelChips($("#schedule-chips"), "schedule");
     renderPrograms();
     renderSpots();
     renderTimeline();
+    renderSourceTicks("#channel-cutins", "#cutins-count", ["video", "podcast"], "No video channels or podcasts yet.");
   }
   if (view === "sources") { renderSources(); renderMedia(); }
-  if (view === "settings") { renderSettings(); renderPairChannels(); }
+  if (view === "settings") { if (me.admin) renderSettings(); renderPairChannels(); }
 }
 
 async function loadConfig() {
@@ -2141,8 +2322,17 @@ daysPicker($("#form-program [data-days]"), DAYS.slice(0, 5));
 basePicker($("#form-program [data-base]"));
 resetSpotForm();
 
-loadConfig().then(() => { route(); connectLive(); if (!live) refresh(); });
-api("/api/me").then((me) => { $("#btn-logout").hidden = !me.login; }).catch(() => {});
+api("/api/me")
+  .then((m) => { me = m; })
+  .catch(() => {})
+  .then(() => {
+    $("#btn-logout").hidden = !me.login;
+    document.body.classList.toggle("is-user", !me.admin);
+    $$("[data-user-name]").forEach((e) => (e.textContent = me.user ? me.user.name : ""));
+    if (me.admin && me.login) loadUsers();
+    return loadConfig();
+  })
+  .then(() => { route(); connectLive(); if (!live) refresh(); });
 $("#btn-logout").addEventListener("click", () =>
   api("/api/logout", { method: "POST" }).finally(() => location.replace("/login")));
 setInterval(tick, 3000);
