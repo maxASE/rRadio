@@ -335,6 +335,9 @@ const MODE_LABEL = {
   offline: "Audio engine offline",
 };
 const PILL = { station: "RADIO", program: "PROGRAM", cutin: "CUT-IN", silence: "WAITING", offline: "OFFLINE" };
+// Lives wait until Invidious can play them (see "waiting" in /api/status).
+const WAIT_BADGE = { live: "live", upcoming: "upcoming", processing: "processing" };
+const WAIT_TEXT = { live: "live now, cuts in once it is over", upcoming: "live soon, cuts in once it is over", processing: "The site is still processing the recording" };
 const KIND_NAME = { podcast: "Podcast", video: "Video", spot: "Spot", media: "Own media", inbox: "Inbox", url: "Link", program: "Program", voice: "Voice message" };
 
 function nowTitle(np) {
@@ -607,11 +610,12 @@ function renderChannelStatus() {
 
   // queue
   const queue = s.queue.filter((i) => i.state !== "playing");
-  $("#queue-count").textContent = queue.length ? `${queue.length} waiting` : "";
+  const later = s.waiting || [];
+  $("#queue-count").textContent = [queue.length ? `${queue.length} waiting` : "", later.length ? `${later.length} waiting to play` : ""].filter(Boolean).join(" · ");
   const held = np.mode === "program";
   $("#queue").replaceChildren(
-    ...(queue.length
-      ? queue.map((i) =>
+    ...(queue.length || later.length
+      ? [...queue.map((i) =>
           el("li", { class: "item-row" },
             el("div", { class: "grow" },
               el("div", { class: "title" }, i.title),
@@ -622,7 +626,18 @@ function renderChannelStatus() {
             el("span", { class: `badge ${i.state}` }, i.state === "downloading" && i.progress != null ? `${Math.round(i.progress * 100)}%` : i.state),
             ["waiting", "downloading", "ready", "failed"].includes(i.state)
               ? el("button", { class: "small-btn", title: "Remove", "aria-label": `Remove ${i.title}`, onclick: () => api(`/api/queue/${encodeURIComponent(i.key)}`, { method: "DELETE" }).then(refresh).catch((e) => toast(e.message, true)) }, "✕")
-              : null))
+              : null)),
+        ...later.map((w) =>
+          el("li", { class: "item-row" },
+            el("div", { class: "grow" },
+              el("div", { class: "title" }, w.title),
+              el("div", { class: "small muted" },
+                `Video · ${w.source} · ${WAIT_TEXT[w.reason] || w.reason} · next look ${new Date(w.next_check * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`)),
+            el("span", { class: "badge waiting" }, WAIT_BADGE[w.reason] || "retrying"),
+            el("button", { class: "small-btn", title: "Forget", "aria-label": `Forget ${w.title}`, onclick: () => {
+              if (!confirm(`Forget ${w.title} on every channel?`)) return;
+              api(`/api/waiting/${encodeURIComponent(w.key)}`, { method: "DELETE" }).then(refresh).catch((e) => toast(e.message, true));
+            } }, "✕")))]
       : [el("li", { class: "empty" }, "Nothing waiting.")]),
   );
 
@@ -1645,6 +1660,10 @@ function sourceEditor(r) {
       num("max_minutes", "Max minutes", 1),
       txt("include", "Only titles matching", "e.g. news|update"),
       txt("exclude", "Skip titles matching", "e.g. live|trailer")),
+    kind === "video"
+      ? el("label", { class: "check" + (owned ? "" : " hidden") }, el("input", { type: "checkbox", checked: src.lives !== false, onchange: (e) => { src.lives = e.target.checked; saveConfig(src.lives ? "Lives are watched" : "Lives are ignored"); } }),
+          "Also play lives once they're over (they wait until Invidious can play the recording)")
+      : null,
     el("div", { class: "row gap" },
       el("button", { class: "small-btn primary" + (owned ? "" : " hidden"), onclick: () => {
         for (const i of $$("[data-k]", box)) src[i.dataset.k] = i.type === "number" ? Number(i.value || 0) : i.value;
@@ -1903,6 +1922,7 @@ $("#form-settings").addEventListener("submit", (ev) => {
     invidious_url: f.invidious_url.value,
     poll_minutes: Number(f.poll_minutes.value),
     max_age_hours: Number(f.max_age_hours.value),
+    live_wait_hours: Number(f.live_wait_hours.value),
     ytdlp_fallback: f.ytdlp_fallback.checked,
     video_audio: f.video_audio.value,
     cache_in_ram: f.cache_in_ram.checked,

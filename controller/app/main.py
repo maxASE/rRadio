@@ -554,6 +554,17 @@ async def remove(key: str):
     return {"ok": True}
 
 
+@app.delete("/api/waiting/{key:path}")
+async def remove_waiting(key: str):
+    """Forget a live (or failed download) waiting for Invidious, on every channel."""
+    src = store.config.source("video", key.split(":", 1)[0])
+    if src and not acc().owns_source(src):
+        raise HTTPException(403, f"only the one who added {src.name} can remove its clips")
+    if not engine.drop_waiting(key):
+        raise HTTPException(404, "not waiting")
+    return {"ok": True}
+
+
 @app.post("/api/check")
 async def check(source_id: str | None = None):
     engine.check_now(source_id)

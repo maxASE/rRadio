@@ -33,6 +33,7 @@ file.
 - **Scheduled programs vs. clips: first come, first served.** A clip that is already playing finishes before a program starts; a clip that arrives during a program waits until the program's window ends. If both happen in the same second, one is picked at random.
 - **Only new items count.** When you add a channel or feed, everything already there is ignored. Use **Play latest** to hear the newest item right away.
 - **Filters per source:** minimum/maximum length (very short videos are skipped by default) and include/exclude words for titles.
+- **Live videos are not lost:** Invidious can't play a live while it runs, nor for the few hours the video site needs to process the recording. rRadio also watches each channel's Live tab, keeps lives (and failed video downloads) on a "Waiting to play" list shown in the queue, looks again every 15 minutes or so, and cuts them in as soon as Invidious can play them. It gives up after `live_wait_hours` (24 by default). Turn it off per source with "Also play lives".
 - **Spots** (news, jingles, ads) go before waiting clips and also play during programs, but never cut off a clip that is playing.
 - **Now playing:** shown in the web UI and sent to players as stream titles. It costs almost nothing, since Liquidsoap already tracks it.
 

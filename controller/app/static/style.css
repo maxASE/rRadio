@@ -159,6 +159,7 @@ label.inline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .badge.playing, .badge.started { color: var(--accent); border-color: var(--accent); }
 .badge.failed, .badge.skipped { color: var(--bad); border-color: var(--bad); }
 .badge.played, .badge.ready { color: var(--ok); border-color: var(--ok); }
+.badge.waiting { color: var(--clip); border-color: var(--clip); }
 
 /* lists */
 .list { list-style: none; margin: 0; padding: 0; }
