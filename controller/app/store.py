@@ -54,6 +54,14 @@ class Store:
                     ts REAL NOT NULL,
                     PRIMARY KEY (source, item)
                 );
+                CREATE TABLE IF NOT EXISTS waiting (
+                    key TEXT PRIMARY KEY,
+                    item TEXT NOT NULL,
+                    since REAL NOT NULL,
+                    next_check REAL NOT NULL,
+                    tries INTEGER NOT NULL DEFAULT 0,
+                    reason TEXT NOT NULL DEFAULT ''
+                );
                 CREATE TABLE IF NOT EXISTS history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     ts REAL NOT NULL,
@@ -101,6 +109,27 @@ class Store:
     def forget_source(self, source: str) -> None:
         with self._lock, self._db:
             self._db.execute("DELETE FROM seen WHERE source=?", (source,))
+            self._db.execute("DELETE FROM waiting WHERE key LIKE ?", (source + ":%",))
+
+    # Clips that can't be played yet (live videos, failed downloads), retried until they can.
+
+    def wait_put(self, key: str, item: dict, since: float, next_check: float, tries: int, reason: str) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT OR REPLACE INTO waiting (key, item, since, next_check, tries, reason) VALUES (?, ?, ?, ?, ?, ?)",
+                (key, json.dumps(item), since, next_check, tries, reason),
+            )
+
+    def wait_drop(self, key: str) -> bool:
+        with self._lock, self._db:
+            return self._db.execute("DELETE FROM waiting WHERE key=?", (key,)).rowcount > 0
+
+    def waiting(self) -> list[dict]:
+        """Oldest first."""
+        with self._lock:
+            rows = self._db.execute("SELECT key, item, since, next_check, tries, reason FROM waiting ORDER BY since").fetchall()
+        keys = ["key", "item", "since", "next_check", "tries", "reason"]
+        return [{**dict(zip(keys, r)), "item": json.loads(r[1])} for r in rows]
 
     def add_history(self, kind: str, source: str, title: str, status: str, detail: str = "", channel: str = "",
                     replay: dict | None = None) -> None:

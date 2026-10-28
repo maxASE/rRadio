@@ -19,6 +19,7 @@ import random
 import re
 import shutil
 import time
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -53,7 +54,16 @@ ICECAST_STATUS_URL = os.environ.get("ICECAST_STATUS_URL", "http://icecast:8000/s
 CHANNELS_FILE = Path(os.environ.get("CHANNELS_FILE", "/data/channels.json"))
 SAVED_DIR = Path(os.environ.get("SAVED_DIR", "/data/saved"))  # recordings saved for later, on disk
 TICK = 1.0
+WAIT_NOTE = {"live": "live now, plays once it is over", "upcoming": "live soon, plays once it is over",
+             "processing": "waits until Invidious can play the recording"}
 INIT_MARK = "__init__"
+# Lives and failed video downloads wait on a list (kept in the state DB) until
+# Invidious can play them: checked this often while a live is on, then with growing gaps.
+WAIT_CHECK = 900
+WAIT_GAP_MAX = 3600
+LIVE_MAX = 2 * 86400  # still live after this long: a 24/7 stream, which never ends
+UPCOMING_MAX = 14 * 86400
+_WAIT_FIELDS = ("kind", "source_id", "source_name", "item_id", "title", "media", "duration", "published", "art", "live")
 HOLD_MAX = 600  # a spot waits at most this long for a song change
 RECORD_MIN_FREE = 64 << 20  # a kept program stops recording when less space than this is left
 RESTART_EVERY = 30  # seconds between Liquidsoap restarts for channel changes
@@ -270,6 +280,7 @@ class Engine:
         # (/api/events) only rebuilds and sends the status when there is news.
         self.version = 0
         self._signature: str | None = None
+        self._waiting_rev = 0
         self._changed = asyncio.Event()
 
     # --- lifecycle ---------------------------------------------------------
@@ -281,7 +292,7 @@ class Engine:
         except OSError as e:
             log.warning("media folder %s is not writable: %s", MEDIA_DIR, e)
         self.write_channels()
-        for coro in (self._tick_loop(), self._poll_loop(), self._download_loop(), self._icecast_loop(), self._inbox_loop()):
+        for coro in (self._tick_loop(), self._poll_loop(), self._download_loop(), self._icecast_loop(), self._inbox_loop(), self._waiting_loop()):
             self._tasks.append(asyncio.create_task(coro))
 
     async def stop(self) -> None:
@@ -499,6 +510,9 @@ class Engine:
         items = await (self.invidious().latest(src) if kind == "video" else podcast_latest(src))
         if not items:
             raise LookupError("no playable items found")
+        items = [i for i in items if not i.live]
+        if not items:
+            raise LookupError("only lives Invidious can't play yet")
         newest = max(items, key=lambda i: i.published or 0)
         newest.item_id += f"-manual-{int(time.time())}"
         newest.channel = cid
@@ -629,14 +643,120 @@ class Engine:
         max_age = self.config.settings.max_age_hours * 3600
         # Oldest first; feeds list newest first, which breaks ties in published time.
         for _, it in sorted(enumerate(new), key=lambda x: (x[1].published or 0, -x[0])):
-            reason = passes_filters(src, it.title, it.duration)
-            if not reason and max_age and it.published and time.time() - it.published > max_age:
+            # A live's length is only known once it is over; the waiting list checks it then.
+            reason = passes_filters(src, it.title, None if it.live else it.duration)
+            if not reason and max_age and not it.live and it.published and time.time() - it.published > max_age:
                 reason = "older than max age"
             if not reason and not any(c.wants(src) for c in self.config.channels):
                 reason = "no channel plays this source"
             if reason:
                 self.store.add_history(kind, src.name, it.title, "skipped", reason)
                 continue
+            if it.live:
+                self._defer(it, it.live)
+                self.store.add_history(kind, src.name, it.title, "waiting", WAIT_NOTE[it.live])
+                continue
+            self.enqueue_all(it, src)
+
+    # --- Waiting to play -------------------------------------------------------
+
+    def _wait_put(self, it: Item, reason: str, next_check: float, first: float | None = None) -> None:
+        data = {k: getattr(it, k) for k in _WAIT_FIELDS}
+        data["first"] = first or time.time()
+        self.store.wait_put(it.key, data, it.wait_since or time.time(), next_check, it.wait_tries, reason)
+        self._waiting_rev += 1
+
+    def _wait_drop(self, key: str, d: dict, status: str = "", detail: str = "") -> None:
+        if self.store.wait_drop(key):
+            self._waiting_rev += 1
+        if status:
+            self.store.add_history("video", d["source_name"], d["title"], status, detail)
+
+    def _defer(self, it: Item, reason: str) -> None:
+        """Put a video clip on the waiting list instead of the queue."""
+        now = time.time()
+        if reason in ("live", "upcoming"):
+            gap = WAIT_CHECK
+        else:  # still being processed, or the download failed: wait longer each time
+            gap = min(WAIT_CHECK * 2 ** it.wait_tries, WAIT_GAP_MAX)
+        it.wait_since = it.wait_since or now
+        self._wait_put(it, reason, now + gap)
+
+    def drop_waiting(self, key: str) -> bool:
+        w = next((w for w in self.store.waiting() if w["key"] == key), None)
+        if not w:
+            return False
+        self._wait_drop(key, w["item"], "removed")
+        return True
+
+    def waiting_for(self, ch: Channel) -> list[dict]:
+        """What waits to play and will cut into `ch` once Invidious can play it."""
+        out = []
+        for w in self.store.waiting():
+            d = w["item"]
+            src = self.config.source("video", d["source_id"])
+            if src and ch.wants(src):
+                out.append({"key": w["key"], "title": d["title"], "source": d["source_name"], "reason": w["reason"],
+                            "since": d.get("first") or w["since"], "next_check": w["next_check"], "tries": w["tries"]})
+        return out
+
+    async def _waiting_loop(self) -> None:
+        while True:
+            try:
+                await self._check_waiting()
+            except Exception:
+                log.exception("waiting list error")
+            await asyncio.sleep(60)
+
+    async def _check_waiting(self) -> None:
+        limit = self.config.settings.live_wait_hours * 3600
+        for w in self.store.waiting():
+            now = time.time()
+            if w["next_check"] > now:
+                continue
+            d, key = w["item"], w["key"]
+            src = self.config.source("video", d["source_id"])
+            if not src:
+                self._wait_drop(key, d)
+                continue
+            if not any(c.wants(src) for c in self.config.channels):
+                self._wait_drop(key, d, "skipped", "no channel plays this source")
+                continue
+            it = Item(**{k: d.get(k) for k in _WAIT_FIELDS})
+            it.wait_since, it.wait_tries = w["since"], w["tries"]
+            first = d.get("first") or w["since"]
+            try:
+                state, info = await self.invidious().playable(it.media)
+            except Exception as e:  # Invidious unreachable: not the video's fault, try again later
+                log.info("waiting check of %s failed: %s", it.title, e)
+                self._wait_put(it, w["reason"], now + WAIT_CHECK, first)
+                continue
+            if state in ("live", "upcoming"):
+                if now - first > (LIVE_MAX if state == "live" else UPCOMING_MAX):
+                    self._wait_drop(key, d, "skipped", f"still {state} after {round((now - first) / 86400)} days")
+                    continue
+                # The clock for giving up starts when the live is over.
+                it.wait_since, it.wait_tries = now, 0
+                nxt = now + WAIT_CHECK
+                if state == "upcoming" and info.get("premiereTimestamp"):
+                    nxt = max(nxt, float(info["premiereTimestamp"]))
+                self._wait_put(it, state, nxt, first)
+                continue
+            if state:
+                if now - it.wait_since > limit:
+                    self._wait_drop(key, d, "failed", f"Invidious still can't play it after {round(limit / 3600)} h")
+                    continue
+                it.wait_tries += 1
+                self._defer(it, state if w["reason"] in ("live", "upcoming", "processing") else w["reason"])
+                continue
+            it.live = ""
+            it.duration = float(info.get("lengthSeconds") or 0) or it.duration
+            reason = passes_filters(src, it.title, it.duration)
+            if reason:
+                self._wait_drop(key, d, "skipped", reason)
+                continue
+            self._wait_drop(key, d)
+            log.info("%s can be played now", it.title)
             self.enqueue_all(it, src)
 
     # --- downloading -------------------------------------------------------
@@ -673,6 +793,18 @@ class Engine:
         except Exception as e:
             err = (str(e) or type(e).__name__)[:300]
             log.warning("download of %s failed: %s", first.title, err)
+            src = self.config.source("video", first.source_id) if first.kind == "video" else None
+            limit = self.config.settings.live_wait_hours * 3600
+            if src and time.time() - (first.wait_since or time.time()) < limit:
+                # Often a live video hasn't finished processing: try again later.
+                for it in group:
+                    if it in self.items:
+                        self.items.remove(it)
+                retry = dataclasses.replace(first, wait_tries=first.wait_tries + (1 if first.wait_since else 0))
+                self._defer(retry, f"download failed: {err}")
+                if not first.wait_since:
+                    self.store.add_history("video", first.source_name, first.title, "waiting", "download failed, trying again later")
+                return
             for it in group:
                 it.state, it.error = "failed", err
                 self.store.add_history(it.kind, it.source_name, it.title, "failed", err, it.channel)
@@ -786,7 +918,7 @@ class Engine:
             prog = (cs.on_program.program.name, cs.on_program.end) if cs.on_program else None
             chans[cid] = (liq, prog, cs.listeners, cs.music_error, cs.spots, cs.shows, cs.ended)
         items = [(i.uid, i.state, i.channel, round((i.progress or 0) * 20)) for i in self.items]
-        sig = json.dumps([id(self.config), self.liq_up, chans, items, self.source_state], sort_keys=True, default=str)
+        sig = json.dumps([id(self.config), self.liq_up, chans, items, self.source_state, self._waiting_rev], sort_keys=True, default=str)
         if sig != self._signature:
             self._signature = sig
             self.version += 1
@@ -1394,6 +1526,8 @@ class Engine:
             "next_program": next_program(ch, self.now()),
             "queue": [i.public() for i in sorted(self.items, key=lambda i: (-i.priority, i.arrived)) if i.channel == ch.id],
             "sources": self.source_state,
+            # Live videos and failed downloads that cut in once Invidious can play them.
+            "waiting": self.waiting_for(ch),
             "spots": self.spot_status(ch),
             "images": self.config_images(),
             "image_errors": {u: e for u in self.config_images() if (e := self.art.error(u))},

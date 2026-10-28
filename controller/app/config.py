@@ -157,6 +157,9 @@ class VideoChannel(Filters):
     enabled: bool = True
     owner: str = ""  # id of the user who added it; "" = the admin
     min_minutes: float = 1  # skips very short videos by default
+    # Also watch the channel's Live tab. Lives wait until Invidious can play the
+    # recording (usually a few hours after they end), then cut in.
+    lives: bool = True
 
 
 class Podcast(Filters):
@@ -236,6 +239,8 @@ class Settings(BaseModel):
     poll_minutes: float = 10
     max_age_hours: float = 48
     ytdlp_fallback: bool = False
+    # How long lives and failed video downloads keep being retried before they are dropped.
+    live_wait_hours: float = 24
     # Audio format fetched from Invidious: "small" = Opus ~70 kbps (itag 250),
     # about half the size of "aac" = AAC 128 kbps (itag 140), so it downloads faster.
     video_audio: Literal["small", "aac"] = "small"
