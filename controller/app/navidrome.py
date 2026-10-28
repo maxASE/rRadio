@@ -1,4 +1,5 @@
-"""Music from Navidrome, or any other server that speaks the Subsonic API."""
+"""Music from Navidrome, or any other server that speaks the Subsonic API
+(Gonic, Airsonic, Ampache, LMS, Funkwhale, …)."""
 
 from __future__ import annotations
 
@@ -29,44 +30,83 @@ class Song:
     cover: str = ""  # cover art id
 
 
+# Servers that refused token login and take the password instead, by (url, user).
+# Funkwhale and LDAP users on Navidrome or Airsonic only accept the password.
+_password_login: set[tuple[str, str]] = set()
+
+
+def _items(value) -> list[dict]:
+    """A list from the JSON, which older servers send as a bare object when there is one item."""
+    if not value:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
 class Navidrome:
+    """A Subsonic API client. Named after Navidrome, the server most people run."""
+
     def __init__(self, url: str, user: str, password: str):
-        self.base = url.rstrip("/")
+        # Accept the API address too (…/rest), as some servers show that one.
+        self.base = re.sub(r"/rest/?$", "", url.strip().rstrip("/"))
         self.user = user
         self.password = password
 
     @classmethod
     def from_settings(cls, st: Settings) -> "Navidrome":
         if not st.navidrome_url or not st.navidrome_user:
-            raise RuntimeError("Navidrome is not set up (Settings → Navidrome)")
+            raise RuntimeError("no music server set up (Settings → Music server)")
         return cls(st.navidrome_url, st.navidrome_user, st.navidrome_secret)
 
+    @property
+    def _with_password(self) -> bool:
+        return (self.base, self.user) in _password_login
+
     def _auth(self) -> dict:
+        common = {"u": self.user, "v": API_VERSION, "c": "rradio"}
+        if self._with_password:
+            return common | {"p": "enc:" + self.password.encode().hex()}
         salt = secrets.token_hex(6)
         token = hashlib.md5((self.password + salt).encode()).hexdigest()
-        return {"u": self.user, "t": token, "s": salt, "v": API_VERSION, "c": "rradio"}
+        return common | {"t": token, "s": salt}
 
     async def _get(self, endpoint: str, **params) -> dict:
+        data = await self._request(endpoint, params)
+        # 41: token login not supported. Some servers answer 40 (wrong user or
+        # password) instead, so try the password once before giving up.
+        code = data.get("error", {}).get("code")
+        if data.get("status") != "ok" and code in (40, 41) and not self._with_password:
+            _password_login.add((self.base, self.user))
+            retry = await self._request(endpoint, params)
+            if retry.get("status") == "ok":
+                return retry
+            _password_login.discard((self.base, self.user))
+        if data.get("status") != "ok":
+            raise RuntimeError(data.get("error", {}).get("message", "the music server refused the request"))
+        return data
+
+    async def _request(self, endpoint: str, params: dict) -> dict:
         async with client() as c:
             try:
                 r = await c.get(f"{self.base}/rest/{endpoint}", params={**self._auth(), "f": "json", **params})
                 r.raise_for_status()
+                body = r.json()
+            except ValueError:
+                raise RuntimeError(f"{self.base} answered, but not with Subsonic JSON. Check the URL.") from None
             except Exception as e:
                 raise RuntimeError(scrub(f"{type(e).__name__}: {e}")) from None
-        data = r.json().get("subsonic-response", {})
-        if data.get("status") != "ok":
-            raise RuntimeError(data.get("error", {}).get("message", "Navidrome refused the request"))
-        return data
+        return body.get("subsonic-response", {})
 
     async def ping(self) -> str:
+        """The server's name and version, e.g. "navidrome 0.53.3"."""
         data = await self._get("ping")
-        return data.get("serverVersion") or data.get("version", "?")
+        version = data.get("serverVersion") or data.get("version", "?")
+        return f"{data['type']} {version}" if data.get("type") else version
 
     async def playlists(self) -> list[dict]:
         data = await self._get("getPlaylists")
         return [
-            {"id": p["id"], "name": p.get("name", p["id"]), "songs": p.get("songCount", 0)}
-            for p in data.get("playlists", {}).get("playlist", [])
+            {"id": str(p["id"]), "name": p.get("name", str(p["id"])), "songs": p.get("songCount", 0)}
+            for p in _items(data.get("playlists", {}).get("playlist"))
         ]
 
     async def playlist_songs(self, playlist: str) -> list[Song]:
@@ -76,13 +116,13 @@ class Navidrome:
             (p for p in lists if p["name"].lower() == playlist.lower()), None
         )
         if not match:
-            raise LookupError(f"no Navidrome playlist called {playlist!r}")
+            raise LookupError(f"no playlist called {playlist!r} on the music server")
         data = await self._get("getPlaylist", id=match["id"])
-        return [_song(s) for s in data.get("playlist", {}).get("entry", [])]
+        return [_song(s) for s in _items(data.get("playlist", {}).get("entry"))]
 
     async def random_songs(self, size: int = 50) -> list[Song]:
         data = await self._get("getRandomSongs", size=size)
-        return [_song(s) for s in data.get("randomSongs", {}).get("song", [])]
+        return [_song(s) for s in _items(data.get("randomSongs", {}).get("song"))]
 
     def stream_url(self, song_id: str, bitrate: int) -> str:
         params = {**self._auth(), "id": song_id}
@@ -100,12 +140,12 @@ class Navidrome:
 
 def _song(s: dict) -> Song:
     return Song(
-        id=s["id"],
-        title=s.get("title", s["id"]),
+        id=str(s["id"]),
+        title=s.get("title", str(s["id"])),
         artist=s.get("artist", ""),
         album=s.get("album", ""),
         duration=float(s["duration"]) if s.get("duration") else None,
-        cover=s.get("coverArt", ""),
+        cover=str(s.get("coverArt", "")),
     )
 
 

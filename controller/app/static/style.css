@@ -423,3 +423,10 @@ fieldset.formats input { margin-top: 3px; }
 .source-ticks { display: flex; flex-direction: column; }
 .source-ticks label.check { min-height: 40px; border-top: 1px solid var(--line); }
 .source-ticks label.check:first-child { border-top: 0; }
+
+/* Radio Browser search results in the add-station form */
+.rb-country { width: 10em; }
+.rb-results { max-height: 360px; overflow-y: auto; margin: 0; }
+.rb-results > li { display: flex; align-items: center; gap: 10px; }
+.rb-logo { width: 36px; height: 36px; flex: none; border-radius: 8px; object-fit: contain; background: var(--line); }
+.rb-results .badge { margin-right: 4px; }

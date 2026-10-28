@@ -8,7 +8,7 @@ const VIEWS = ["home", "channel", "schedule", "sources", "settings"];
 let cfg = null;
 let status = null;
 let mediaLib = { files: [], folders: [] };
-let playlists = null; // Navidrome playlists, loaded on demand
+let playlists = null; // music server playlists, loaded on demand
 let channelId = null;
 try { channelId = localStorage.getItem("channel"); } catch {}
 let view = "home";
@@ -910,14 +910,14 @@ async function fillPlaylists(select, current = "") {
     el("option", { value: "" }, "Random songs from the whole library"),
     ...lists.map((p) => el("option", { value: p.name, selected: p.name === current }, `${p.name} (${p.songs})`)),
   );
-  if (!lists.length) select.append(el("option", { value: "", disabled: true }, "No playlists found. Check Settings → Navidrome."));
+  if (!lists.length) select.append(el("option", { value: "", disabled: true }, "No playlists found. Check Settings → Music server."));
 }
 
-// Stream URL or Navidrome playlist inputs, used by the program form.
+// Stream URL or music server playlist inputs, used by the program form.
 function basePicker(container) {
   const kind = el("select", { name: "kind" },
     el("option", { value: "stream" }, "Radio stream"),
-    el("option", { value: "navidrome" }, "Navidrome"));
+    el("option", { value: "navidrome" }, "Music server"));
   const url = el("input", { name: "url", type: "url", placeholder: "Stream URL (https://…/stream.mp3)", required: true });
   const pl = el("select", { name: "playlist", class: "hidden" });
   const shuffle = el("label", { class: "check hidden" }, el("input", { type: "checkbox", name: "shuffle", checked: true }), "Shuffle");
@@ -938,7 +938,7 @@ const baseValue = (f) => ({
   shuffle: f.shuffle.checked,
 });
 const baseLabel = (b) =>
-  b.kind === "navidrome" ? `Navidrome · ${b.playlist || "random songs from the library"}${b.playlist && b.shuffle ? " · shuffled" : ""}` : b.url;
+  b.kind === "navidrome" ? `Music server · ${b.playlist || "random songs from the library"}${b.playlist && b.shuffle ? " · shuffled" : ""}` : b.url;
 const baseKey = (b) => (b.kind === "navidrome" ? `navidrome:${b.playlist}:${b.shuffle}` : `stream:${b.url}`);
 
 function daysPicker(container, selected) {
@@ -1501,8 +1501,8 @@ function sourceRows() {
   return rows;
 }
 
-const TYPE_NAME = { station: "Radio station", navidrome: "Navidrome", video: "Video", podcast: "Podcast", media: "Own media" };
-const FILTERS = [["all", "All"], ["station", "Radio stations"], ["navidrome", "Navidrome"], ["video", "Video"], ["podcast", "Podcasts"], ["media", "Own media"]];
+const TYPE_NAME = { station: "Radio station", navidrome: "Music server", video: "Video", podcast: "Podcast", media: "Own media" };
+const FILTERS = [["all", "All"], ["station", "Radio stations"], ["navidrome", "Music server"], ["video", "Video"], ["podcast", "Podcasts"], ["media", "Own media"]];
 
 function usesSource(c, row) {
   if (row.type === "station" || row.type === "navidrome") return row.copies.some((x) => x.c === c);
@@ -1700,6 +1700,7 @@ function showAddKind(k) {
   f.playlist.classList.toggle("hidden", !nd);
   $("[data-shuffle]", f).classList.toggle("hidden", !nd);
   $$("[data-hint]", f).forEach((p) => p.classList.toggle("hidden", p.dataset.hint !== k));
+  $("[data-search]", f).classList.toggle("hidden", nd);
   if (nd) fillPlaylists(f.playlist);
   // Stations go to the channel being looked at; new video channels and podcasts to all of them.
   const form = $(`#add-source form:not(.hidden)`);
@@ -1778,6 +1779,65 @@ function imageField(value, { label = "Picture", placeholder = "Picture URL (opti
   return { box, input };
 }
 
+// Station search on radio-browser.info. The station picked from the results
+// brings its logo along, so the add button needn't look for one.
+let rbPicked = null;
+let rbPreview = null;
+function stopPreview() {
+  if (rbPreview) { rbPreview.audio.pause(); rbPreview.btn.textContent = "Listen"; rbPreview = null; }
+}
+async function searchStations() {
+  const f = $("#form-station");
+  const out = $("#rb-results");
+  const note = $("#rb-note");
+  const q = f.rb_query.value.trim(), country = f.rb_country.value.trim();
+  if (!q && !country) return toast("Type a name, genre or country", true);
+  stopPreview();
+  note.textContent = "Searching…";
+  note.classList.remove("bad");
+  try {
+    const found = await api(`/api/stations/search?${new URLSearchParams({ q, country })}`);
+    note.textContent = found.length ? `${plural(found.length, "station")} on radio-browser.info, most voted first. Press Use to fill in the form.` : "Nothing found. Try another name or genre.";
+    out.replaceChildren(...found.map(stationResult));
+    out.classList.toggle("hidden", !found.length);
+  } catch (e) {
+    note.textContent = e.message;
+    note.classList.add("bad");
+  }
+}
+function stationResult(st) {
+  const logo = el("img", { class: "rb-logo", alt: "", loading: "lazy", referrerpolicy: "no-referrer" });
+  if (st.image) { logo.onerror = () => logo.removeAttribute("src"); logo.src = st.image; }
+  const listen = el("button", { type: "button", class: "small-btn", onclick: () => {
+    const same = rbPreview?.btn === listen;
+    stopPreview();
+    if (same) return;
+    const audio = new Audio(st.url);
+    audio.play().catch(() => toast("Your browser can't play this stream here; rRadio may still play it", true));
+    rbPreview = { audio, btn: listen };
+    listen.textContent = "Stop";
+  } }, "Listen");
+  const use = el("button", { type: "button", class: "small-btn primary", onclick: () => {
+    const f = $("#form-station");
+    stopPreview();
+    f.name.value = st.name;
+    f.url.value = st.url;
+    rbPicked = st;
+    f.name.focus();
+    toast(`${st.name} filled in. Tick the channels and press Add station.`);
+  } }, "Use");
+  const meta = [st.country, st.codec && `${st.codec}${st.bitrate ? ` ${st.bitrate}k` : ""}`, ...st.tags].filter(Boolean);
+  return el("li", {}, logo,
+    el("div", { class: "grow" }, el("div", {}, st.name), el("div", { class: "small" }, meta.map((m) => el("span", { class: "badge" }, m)))),
+    listen, use);
+}
+$("#btn-rb-search").addEventListener("click", searchStations);
+for (const name of ["rb_query", "rb_country"]) {
+  $("#form-station")[name].addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); searchStations(); }
+  });
+}
+
 $("#form-station").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const f = ev.target;
@@ -1787,12 +1847,18 @@ $("#form-station").addEventListener("submit", async (ev) => {
   const btn = $("button.primary", f);
   btn.disabled = true;
   let image = "";
-  if (!nd) image = await findLogo(f.url.value, f.name.value).then((x) => x.image, () => "");
+  const picked = !nd && rbPicked?.url === f.url.value ? rbPicked : null;
+  if (picked) {
+    image = picked.image;
+    api("/api/stations/picked", { method: "POST", body: { uuid: picked.uuid } }).catch(() => {});
+  }
+  if (!nd && !image) image = await findLogo(f.url.value, f.name.value).then((x) => x.image, () => "");
   for (const c of cfg.channels) {
     if (targets.includes(c.id)) c.stations.push({ name: f.name.value, kind: nd ? "navidrome" : "stream", url: nd ? "" : f.url.value, playlist: nd ? f.playlist.value : "", shuffle: f.shuffle.checked, image });
   }
   f.name.value = "";
   f.url.value = "";
+  rbPicked = null;
   btn.disabled = false;
   saveConfig(image ? "Station added, with its logo" : "Station added");
 });
@@ -1953,7 +2019,7 @@ $("#btn-test-nd").addEventListener("click", async () => {
   out.className = "small";
   const body = { url: f.navidrome_url.value, user: f.navidrome_user.value, password: f.navidrome_password.value };
   const r = await api("/api/navidrome/test", { method: "POST", body }).catch((e) => ({ ok: false, error: e.message }));
-  out.textContent = r.ok ? `Connected · server ${r.version} · ${r.playlists} playlist${r.playlists === 1 ? "" : "s"}` : r.error;
+  out.textContent = r.ok ? `Connected · ${r.version} · ${r.playlists} playlist${r.playlists === 1 ? "" : "s"}` : r.error;
   out.className = "small " + (r.ok ? "ok" : "bad");
 });
 

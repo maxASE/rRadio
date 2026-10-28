@@ -177,7 +177,7 @@
 
       <form class="card add-card hidden edit-only" id="form-program">
         <h3>New program</h3>
-        <p class="muted small">Another stream or Navidrome playlist that takes over during a weekly time window. If a clip is already playing when the window opens, the clip finishes first.</p>
+        <p class="muted small">Another stream or music server playlist that takes over during a weekly time window. If a clip is already playing when the window opens, the clip finishes first.</p>
         <div class="row gap">
           <input name="name" placeholder="Name" required>
           <div class="base-pick" data-base></div>
@@ -259,7 +259,7 @@
         <div>
           <h2 class="page-title">Sources</h2>
           <p class="muted">Everything rRadio can play, in one list. Each channel picks its stations on its page, and what cuts in under Schedule.</p>
-          <p class="muted small user-only">You see your own channels and subscriptions here. The video channels and podcasts you add are yours alone; Invidious and Navidrome are set up by the admin.</p>
+          <p class="muted small user-only">You see your own channels and subscriptions here. The video channels and podcasts you add are yours alone; Invidious and the music server are set up by the admin.</p>
         </div>
         <button id="btn-add-source" class="primary">+ Add source</button>
       </div>
@@ -268,14 +268,23 @@
         <div class="row between"><h3>Add a source</h3><button type="button" class="small-btn" data-close>Close</button></div>
         <div class="seg" id="add-kind" role="tablist">
           <button type="button" data-kind="station" class="active">Radio station</button>
-          <button type="button" data-kind="navidrome">Navidrome</button>
+          <button type="button" data-kind="navidrome">Music server</button>
           <button type="button" data-kind="video">Video channel</button>
           <button type="button" data-kind="podcast">Podcast</button>
           <button type="button" data-kind="media">Own media</button>
         </div>
         <form id="form-station" data-add="station navidrome" class="stack">
           <p class="muted small" data-hint="station">A radio stream that plays whenever nothing else is on. Pick it per channel under “Station underneath”.</p>
-          <p class="muted small hidden" data-hint="navidrome">Music from your Navidrome (set it up under Settings), played as a station.</p>
+          <div class="stack" data-search>
+            <div class="row gap">
+              <input name="rb_query" class="grow" placeholder="Search by name or genre (jazz, news, P3…)" aria-label="Search radio-browser.info">
+              <input name="rb_country" class="rb-country" placeholder="Country (SE, DE…)" aria-label="Country">
+              <button type="button" id="btn-rb-search">Search</button>
+            </div>
+            <p class="muted small" id="rb-note">Search the stations listed on radio-browser.info, or enter a stream yourself below.</p>
+            <ul class="list rb-results hidden" id="rb-results"></ul>
+          </div>
+          <p class="muted small hidden" data-hint="navidrome">Music from your own server (Navidrome, Gonic, Airsonic, Ampache, LMS, Funkwhale or any other Subsonic server; set it up under Settings), played as a station.</p>
           <div class="row gap">
             <input name="name" placeholder="Name" required>
             <input name="url" type="url" placeholder="Stream URL (https://…/stream.mp3)" required>
@@ -384,8 +393,8 @@
           <label class="check"><input name="replay_keep" type="checkbox"> Keep voice messages for a day, so the apps can play them again from the history (other clips are fetched again from their source)</label>
           <label class="check"><input name="ytdlp_fallback" type="checkbox"> Fall back to yt-dlp if Invidious can't deliver audio (contacts the video site directly)</label>
           <fieldset class="formats">
-            <legend>Navidrome</legend>
-            <span class="small muted">For stations and programs that play your own music. Any Subsonic-compatible server works.</span>
+            <legend>Music server</legend>
+            <span class="small muted">For stations and programs that play your own music: Navidrome, Gonic, Airsonic, Ampache, LMS, Funkwhale or any other Subsonic server. Funkwhale wants the address ending in /api/subsonic.</span>
             <label>URL <input name="navidrome_url" placeholder="http://host.docker.internal:4533"></label>
             <label>User <input name="navidrome_user" autocomplete="off"></label>
             <label>Password <input name="navidrome_password" type="password" autocomplete="new-password" placeholder="or set NAVIDROME_PASSWORD in .env"></label>
@@ -444,7 +453,7 @@
           <a href="/api/config.yaml" class="button">Download config.yaml</a>
           <a href="/api/backup" class="button">Download full backup</a>
         </div>
-        <p class="muted small admin-only">The full backup is a zip with the config, your own audio and uploaded pictures. To move one channel, use <em>Export channel</em> on its page instead. Neither includes the Navidrome password, history or downloaded clips.</p>
+        <p class="muted small admin-only">The full backup is a zip with the config, your own audio and uploaded pictures. To move one channel, use <em>Export channel</em> on its page instead. Neither includes the music server password, history or downloaded clips.</p>
         <form id="form-import" class="stack">
           <label class="field">Import a channel export or a full backup <input name="file" type="file" accept=".zip,application/zip" required></label>
           <label class="field">Name for the imported channel <input name="name" placeholder="optional; keeps the exported name"></label>
