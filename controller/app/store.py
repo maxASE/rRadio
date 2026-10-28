@@ -13,6 +13,9 @@ from .devices import Devices
 from .sessions import Sessions
 from .users import Users
 
+# How long the history keeps what was not saved.
+HISTORY_DAYS = 7
+
 DB_PATH = Path(os.environ.get("STATE_DB", "/data/state.db"))
 
 
@@ -107,8 +110,11 @@ class Store:
                 "INSERT INTO history (ts, kind, source, title, status, detail, channel, replay) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (time.time(), kind, source, title, status, detail, channel, json.dumps(replay) if replay else ""),
             )
+            # Unsaved entries go after a week (the Week tab, its numbers and search look no
+            # further back) and beyond the newest 500; saved ones stay until unsaved.
             self._db.execute(
-                "DELETE FROM history WHERE saved = 0 AND id NOT IN (SELECT id FROM history ORDER BY id DESC LIMIT 500)"
+                "DELETE FROM history WHERE saved = 0 AND (ts < ? OR id NOT IN (SELECT id FROM history ORDER BY id DESC LIMIT 500))",
+                (time.time() - HISTORY_DAYS * 86400,),
             )
 
     _ENTRY = "SELECT id, ts, kind, source, title, status, detail, replay, saved FROM history"
