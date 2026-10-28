@@ -388,3 +388,16 @@ def test_week_numbers_count_what_played(admin, app_main):
     assert len(nums["days"]) == 7 and nums["days"][-1]["date"] == nums["today"]
     assert nums["totals"]["news"] >= 1 and nums["days"][-1]["news"] >= 1
     assert any(t["name"] == "Ekot" for t in nums["top"])
+
+
+def test_history_forgets_unsaved_entries_after_a_week(app_main):
+    state = app_main.state
+    state.add_history("voice", "Dad", "Old news", "played", channel="kid")
+    state.add_history("voice", "Dad", "Old but saved", "played", channel="kid")
+    old, kept = [e["id"] for e in state.history(2, "kid")][::-1]
+    state.set_saved(kept, True)
+    with state._lock, state._db:
+        state._db.execute("UPDATE history SET ts = ts - 8 * 86400 WHERE id IN (?, ?)", (old, kept))
+    state.add_history("voice", "Dad", "Today", "played", channel="kid")
+    ids = {e["id"] for e in state.history(500, "kid")}
+    assert old not in ids and kept in ids
