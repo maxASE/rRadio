@@ -60,7 +60,7 @@ The web UI has four parts:
 - **Schedule:** the week as a timeline per channel, with its programs and spots.
 - **Sources:** stations, Navidrome playlists, video channels, podcasts and your
   own media in one list, with a checkbox per channel.
-- **Settings:** Invidious, Navidrome, stream formats and the rest.
+- **Settings:** Invidious, your music server, stream formats and the rest.
 
 ### Pointing at your Invidious
 
@@ -108,18 +108,35 @@ Adding, renaming or removing a channel restarts the audio engine, so every
 stream drops for a few seconds. Icecast needs one mount per channel and
 format; `ICECAST_MAX_SOURCES` (default 20) is the limit.
 
-## Navidrome: your own music
+## Finding radio stations
 
-A station or program can play music from Navidrome (or any Subsonic server)
-instead of a radio stream: a playlist in order or shuffled, or random songs
-from the whole library. Good for a channel of its own, or an evening program.
+Under **Sources › + Add source › Radio station**, search by name, genre
+(`jazz`, `news`, …) or country code (`SE`, `DE`). The results come from
+[radio-browser.info](https://www.radio-browser.info), most voted first,
+without stations it knows are broken. **Listen** tries the stream in your
+browser and **Use** fills in the form, logo included. You can still paste any
+stream URL yourself.
 
-1. Enter the URL and user under **Settings → Navidrome** and press **Test**.
+## Your own music: Navidrome or any Subsonic server
+
+A station or program can play music from your own music server instead of a
+radio stream: a playlist in order or shuffled, or random songs from the whole
+library. Good for a channel of its own, or an evening program. Anything that
+speaks the Subsonic API works: Navidrome, Gonic, Airsonic(-Advanced),
+Ampache, LMS (Lightweight Music Server), Funkwhale and others.
+
+1. Enter the URL and user under **Settings → Music server** and press **Test**.
    For the password, either type it there (it is stored in `config.yaml`) or
    put `NAVIDROME_PASSWORD=` in `.env`, which keeps it out of the config file.
-   Navidrome on the same host is usually `http://host.docker.internal:4533`.
-2. Under **Sources › + Add source**, choose **Navidrome** and pick a playlist.
-   For a program, choose **Navidrome** in **Schedule › + Program**.
+   Navidrome on the same host is usually `http://host.docker.internal:4533`;
+   for Funkwhale use `https://<your pod>/api/subsonic`. An address ending in
+   `/rest` works too. Servers that don't take token logins (Funkwhale, LDAP
+   users) get the password instead, which rRadio finds out by itself.
+2. Under **Sources › + Add source**, choose **Music server** and pick a playlist.
+   For a program, choose **Music server** in **Schedule › + Program**.
+
+No music server of your own? Navidrome's public demo
+(`https://demo.navidrome.org`, user and password `demo`) is enough to try it.
 
 Songs are fetched one ahead as MP3 (192 kbps by default, changeable in
 Settings) and deleted after they played. Cut-ins pause the song and it
@@ -576,7 +593,7 @@ Images exist for amd64 and arm64, so a Raspberry Pi 4/5 works.
 - **Downloads fail:** The video site regularly breaks Invidious. Update Invidious and
   its companion, or enable the yt-dlp fallback.
 - **Navidrome station is silent:** the channel's page shows the error under the
-  station name. Check Settings → Navidrome → Test, and that the playlist name
+  station name. Check Settings → Music server → Test, and that the playlist name
   still exists.
 - **A spot never plays:** the Schedule page shows its next time and any error,
   and **Play now** shows problems right away.

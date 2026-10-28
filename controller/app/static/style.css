@@ -395,3 +395,10 @@ fieldset.formats input { margin-top: 3px; }
 #voice-audio { width: 100%; }
 #btn-voice-rec.recording { background: var(--bad); border-color: var(--bad); }
 .voice-time { font-variant-numeric: tabular-nums; }
+
+/* Radio Browser search results in the add-station form */
+.rb-country { width: 10em; }
+.rb-results { max-height: 360px; overflow-y: auto; margin: 0; }
+.rb-results > li { display: flex; align-items: center; gap: 10px; }
+.rb-logo { width: 36px; height: 36px; flex: none; border-radius: 8px; object-fit: contain; background: var(--line); }
+.rb-results .badge { margin-right: 4px; }

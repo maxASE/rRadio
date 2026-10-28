@@ -204,6 +204,62 @@ async def _radio_browser(c, stream_url: str, name: str) -> dict | None:
     raise RuntimeError(f"radio-browser.info unreachable ({type(error).__name__})")
 
 
+async def search_stations(query: str, country: str = "", limit: int = 30) -> list[dict]:
+    """Stations on radio-browser.info whose name, tag (genre) or country matches,
+    most voted first. Broken streams are left out."""
+    query, country = query.strip(), country.strip()
+    params = {"order": "votes", "reverse": "true", "hidebroken": "true", "limit": limit}
+    if len(country) == 2:
+        params["countrycode"] = country.upper()
+    elif country:
+        params["country"] = country
+    error = None
+    async with client(10) as c:
+        for base in RADIO_BROWSER_URLS:
+            base = base.rstrip("/")
+            try:
+                found: dict[str, dict] = {}
+                # A word like "jazz" is more often a tag than a station name, so ask both.
+                for field in ("name", "tag"):
+                    if not query and field == "tag":
+                        continue
+                    r = await c.get(f"{base}/json/stations/search", params={**params, field: query} if query else params)
+                    r.raise_for_status()
+                    for st in r.json():
+                        found.setdefault(st["stationuuid"], st)
+                stations = sorted(found.values(), key=lambda st: -int(st.get("votes") or 0))[:limit]
+                return [_station(st) for st in stations]
+            except Exception as e:  # try the next mirror
+                error = e
+    raise RuntimeError(f"radio-browser.info unreachable ({type(error).__name__})")
+
+
+def _station(st: dict) -> dict:
+    return {
+        "uuid": st["stationuuid"],
+        "name": st.get("name", "").strip(),
+        "url": st.get("url_resolved") or st.get("url", ""),
+        "image": st.get("favicon", ""),
+        "homepage": st.get("homepage", ""),
+        "country": st.get("countrycode", ""),
+        "tags": [t for t in (st.get("tags") or "").split(",") if t][:4],
+        "codec": st.get("codec", ""),
+        "bitrate": int(st.get("bitrate") or 0),
+        "votes": int(st.get("votes") or 0),
+    }
+
+
+async def count_station_click(uuid: str) -> None:
+    """Tell radio-browser.info a station was picked; its popularity ranking relies on this."""
+    async with client(10) as c:
+        for base in RADIO_BROWSER_URLS:
+            try:
+                (await c.get(f"{base.rstrip('/')}/json/url/{uuid}")).raise_for_status()
+                return
+            except Exception:
+                continue
+
+
 async def _homepages(c, stream_url: str) -> list[str]:
     """The station's website: from the stream's icy-url header, else guessed from its host."""
     pages = []

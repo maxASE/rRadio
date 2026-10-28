@@ -19,7 +19,7 @@ from urllib.parse import quote, urlencode
 import httpx
 import segno
 import yaml
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,7 +28,7 @@ from pydantic import BaseModel, ValidationError
 from . import API_VERSION, __version__
 from . import devices as devmod
 from . import media, transfer
-from .art import find_station_logo, image_file, save_image
+from .art import count_station_click, find_station_logo, image_file, save_image, search_stations
 from .config import SECRET_MASK, Config, ConfigStore, Podcast, Station, dump
 from .engine import Engine, short_error
 from .liq import Liquidsoap
@@ -403,9 +403,9 @@ async def choose_station(body: StationChoice):
                     raise HTTPException(502, str(e))
                 match = next((p for p in lists if p["id"] == name or p["name"].lower() == name.lower()), None)
                 if match is None:
-                    raise HTTPException(404, f"no Navidrome playlist called {name!r}")
+                    raise HTTPException(404, f"no playlist called {name!r} on the music server")
                 name = match["name"]
-            same = Station(name=name or "Navidrome library", kind="navidrome", playlist=name)
+            same = Station(name=name or "Music library", kind="navidrome", playlist=name)
             ch.stations.append(same)
         body.id = same.id
     if body.id not in {s.id for s in ch.stations}:
@@ -536,6 +536,28 @@ async def station_logo(body: Lookup):
         raise HTTPException(502, f"{type(e).__name__}: {e}")
 
 
+@app.get("/api/stations/search")
+async def station_search(q: str = "", country: str = ""):
+    """Find radio stations on radio-browser.info by name, genre or country."""
+    if not q.strip() and not country.strip():
+        raise HTTPException(400, "enter a station name, genre or country")
+    try:
+        return await search_stations(q, country)
+    except Exception as e:
+        raise HTTPException(502, str(e))
+
+
+class StationPick(BaseModel):
+    uuid: str
+
+
+@app.post("/api/stations/picked", status_code=204)
+async def station_picked(body: StationPick, tasks: BackgroundTasks):
+    """Count a click on radio-browser.info for a station added from the search."""
+    if re.fullmatch(r"[0-9a-f-]{36}", body.uuid):
+        tasks.add_task(count_station_click, body.uuid)
+
+
 @app.post("/api/images")
 async def upload_image(file: UploadFile = File(...)):
     """Upload a logo or picture; returns the URL to put in an `image` field."""
@@ -640,7 +662,7 @@ def _navidrome(body: NavidromeTest | None = None) -> Navidrome:
     pw = body.password if body.password and body.password != SECRET_MASK else st.navidrome_secret
     url, user = body.url or st.navidrome_url, body.user or st.navidrome_user
     if not url or not user:
-        raise HTTPException(400, "enter the Navidrome URL and user name")
+        raise HTTPException(400, "enter the music server URL and user name")
     return Navidrome(url, user, pw)
 
 
