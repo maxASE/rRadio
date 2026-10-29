@@ -434,3 +434,21 @@ def test_a_full_ram_disk_moves_the_recording_to_disk(app_main, ram_dir):
     assert not path.exists() and target.read_bytes() == b"ID3" + b"\0" * 100 + b"more"
     assert engine.store.replay_of(entry_id)[1]["path"] == str(target)
     assert again is None  # already on disk: when that is full too, the recording stops
+
+
+def test_the_ram_setting_sends_downloads_to_disk(admin, app_main, ram_dir):
+    from app import sources
+
+    engine = app_main.engine
+    r = admin.get("/api/ram").json()
+    assert r["size"] > 0 and r["used"] >= 0
+    settings = engine.config.settings
+    assert settings.ram_max_mb == 0 and sources.ram_free() > 0
+    assert sources.cache_dir(True) == ram_dir
+    try:
+        settings.ram_max_mb = 1  # less than is free to keep: everything goes to disk
+        assert sources.ram_free() < sources.RAM_MIN_FREE
+        assert sources.cache_dir(True) == sources.CACHE_DIR
+        assert sources.room(ram_dir / "replay") == sources.ram_free()
+    finally:
+        settings.ram_max_mb = 0

@@ -246,6 +246,9 @@ class Settings(BaseModel):
     video_audio: Literal["small", "aac"] = "small"
     # Download clips to the RAM disk instead of the data volume (saves SSD writes).
     cache_in_ram: bool = True
+    # The most RAM rRadio uses for downloads and recordings (MB, 0 = the whole RAM disk,
+    # RAM_CACHE_SIZE). Past it, new downloads and growing recordings go to disk.
+    ram_max_mb: int = Field(default=0, ge=0)
     # Keep voice messages for a day after they played, so the apps can play them again
     # from the history. Other clips are fetched again from their source when asked.
     replay_keep: bool = True

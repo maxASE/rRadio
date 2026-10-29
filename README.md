@@ -641,6 +641,9 @@ emptied on every restart. By default they are kept on a RAM disk
 (`RAM_CACHE_SIZE`, 512 MB), so nothing is written to your SSD; turn off
 **Settings → Keep downloads in RAM** to use the data volume instead. A clip
 needs roughly 0.5–1 MB per minute of audio.
+**Settings → Use at most this much RAM** sets a lower limit than the RAM disk
+(it shows the RAM disk's size and use); past it, or when the RAM disk itself is
+nearly full, new downloads and kept programs go to the data volume.
 Images exist for amd64 and arm64, so a Raspberry Pi 4/5 works.
 
 ## Troubleshooting

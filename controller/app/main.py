@@ -10,6 +10,7 @@ import mimetypes
 import os
 import re
 import secrets
+import shutil
 import time
 from contextlib import asynccontextmanager
 from datetime import date
@@ -34,7 +35,7 @@ from .config import SECRET_MASK, Config, ConfigStore, Podcast, Station, dump
 from .engine import SAVED_DIR, Engine, short_error
 from .liq import Liquidsoap
 from .navidrome import Navidrome
-from .sources import USER_AGENT, Invidious, Item, cache_dir, feed_title, podcast_latest, video_id_from_url
+from .sources import RAM_CACHE_DIR, USER_AGENT, Invidious, Item, cache_dir, feed_title, podcast_latest, video_id_from_url
 from .sessions import COOKIE, DAYS
 from .store import Store
 from .titles import peek
@@ -737,6 +738,15 @@ async def check_feed(body: Lookup):
 
 class InvidiousTest(BaseModel):
     url: str | None = None
+
+
+@app.get("/api/ram")
+def ram():
+    """The RAM disk for Settings: its size (RAM_CACHE_SIZE) and how much is in use, in bytes."""
+    if not RAM_CACHE_DIR.is_dir():
+        return {"size": 0, "used": 0}
+    usage = shutil.disk_usage(RAM_CACHE_DIR)
+    return {"size": usage.total, "used": usage.used}
 
 
 @app.post("/api/invidious/test")
