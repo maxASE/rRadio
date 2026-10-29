@@ -31,7 +31,6 @@ from .config import DAYS, BaseSource, Channel, Config, ConfigStore, Podcast, Pro
 from .liq import Liquidsoap
 from .media import MEDIA_DIR, Inbox, ensure_dirs, expand
 from .navidrome import Feeder, Navidrome, scrub
-from . import sources
 from .sources import (
     Invidious,
     Item,
@@ -45,7 +44,7 @@ from .sources import (
     REPLAY_KEEP,
     USER_AGENT,
     cache_dir,
-    room,
+    ram_usage,
     CACHE_DIR,
 )
 from .store import Store
@@ -262,7 +261,6 @@ class Engine:
     def __init__(self, cfg: ConfigStore, store: Store, liq: Liquidsoap):
         self.cfg = cfg
         self.store = store
-        sources.ram_max = lambda: self.config.settings.ram_max_mb << 20
         self.booted = time.time()
         self.liq = liq
         self.items: list[Item] = []  # cut-ins of every channel
@@ -1117,7 +1115,7 @@ class Engine:
 
     async def _record(self, p: Program, path: Path) -> None:
         """Copies the program's stream into `path` until cancelled, reconnecting after a
-        drop. When the RAM disk (or rRadio's share of it, Settings) gets nearly full, the recording moves to disk and goes on
+        drop. When the RAM disk gets nearly full, the recording moves to disk and goes on
         there; it only stops early when the disk is nearly full too."""
         headers = {"User-Agent": USER_AGENT}
         async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(30, read=60)) as client:
@@ -1134,7 +1132,7 @@ class Engine:
                                 if unchecked > 1 << 20:  # about once a minute
                                     unchecked = 0
                                     out.flush()
-                                    if room(path.parent) < RECORD_MIN_FREE:
+                                    if shutil.disk_usage(path.parent).free < RECORD_MIN_FREE:
                                         moved = await self._record_to_disk(p, path, out)
                                         if not moved:
                                             log.warning("Stopped keeping %s: %s is nearly full", p.name, path.parent)
@@ -1552,6 +1550,8 @@ class Engine:
                 if i.state not in ("playing", "failed")
             ],
             "now": self.now_playing(ch),
+            # The RAM disk filling up: the web UI warns admins to raise RAM_CACHE_SIZE.
+            "ram": ram_usage(),
             "engine_up": self.liq_up and cs.liq is not None,
             "station": station.model_dump() if station else None,
             # The channel's stations, for a picker in the app.

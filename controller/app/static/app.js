@@ -392,6 +392,17 @@ function gotStatus(s) {
   advancedAt = Date.now();
   setServerTime(s.time);
   renderStatus();
+  showRamWarning(s.ram);
+}
+
+// Only admins can do something about it (RAM_CACHE_SIZE in .env).
+function showRamWarning(ram) {
+  const el = $("#ram-warn");
+  el.hidden = !(me.admin && ram && ram.low);
+  if (el.hidden) return;
+  const mb = (b) => `${Math.round(b / (1 << 20))} MB`;
+  el.textContent = `The RAM disk is nearly full (${mb(ram.used)} of ${mb(ram.size)}). New downloads and kept programs `
+    + "now go to disk. Raise RAM_CACHE_SIZE in .env (for example to 2g) and run docker compose up -d.";
 }
 
 function connectLive() {
@@ -1969,7 +1980,6 @@ $("#form-upload").addEventListener("submit", async (ev) => {
 
 function renderSettings() {
   const f = $("#form-settings");
-  showRam();
   for (const c of $$('input[name="streams"]', f)) c.checked = cfg.settings.streams.includes(c.value);
   for (const [k, v] of Object.entries(cfg.settings)) {
     const i = f.elements[k];
@@ -1977,14 +1987,6 @@ function renderSettings() {
     if (i.type === "checkbox") i.checked = v;
     else i.value = v;
   }
-}
-
-async function showRam() {
-  const r = await api("/api/ram").catch(() => null);
-  if (!r || !r.size) return;
-  const mb = (b) => `${Math.round(b / (1 << 20))} MB`;
-  $("#ram-info").textContent = `Past it, new downloads and kept programs go to disk. The RAM disk holds ${mb(r.size)} `
-    + `(RAM_CACHE_SIZE in .env, the most this can be); ${mb(r.used)} are in use now.`;
 }
 
 $("#form-settings").addEventListener("submit", (ev) => {
@@ -2001,7 +2003,6 @@ $("#form-settings").addEventListener("submit", (ev) => {
     ytdlp_fallback: f.ytdlp_fallback.checked,
     video_audio: f.video_audio.value,
     cache_in_ram: f.cache_in_ram.checked,
-    ram_max_mb: Math.max(0, Math.round(Number(f.ram_max_mb.value) || 0)),
     replay_keep: f.replay_keep.checked,
     streams: $$('input[name="streams"]:checked', f).map((c) => c.value),
     navidrome_url: f.navidrome_url.value,

@@ -436,19 +436,14 @@ def test_a_full_ram_disk_moves_the_recording_to_disk(app_main, ram_dir):
     assert again is None  # already on disk: when that is full too, the recording stops
 
 
-def test_the_ram_setting_sends_downloads_to_disk(admin, app_main, ram_dir):
+def test_the_status_says_when_the_ram_disk_is_nearly_full(admin, app_main, ram_dir, monkeypatch):
+    import shutil as sh
+
     from app import sources
 
-    engine = app_main.engine
-    r = admin.get("/api/ram").json()
-    assert r["size"] > 0 and r["used"] >= 0
-    settings = engine.config.settings
-    assert settings.ram_max_mb == 0 and sources.ram_free() > 0
-    assert sources.cache_dir(True) == ram_dir
-    try:
-        settings.ram_max_mb = 1  # less than is free to keep: everything goes to disk
-        assert sources.ram_free() < sources.RAM_MIN_FREE
-        assert sources.cache_dir(True) == sources.CACHE_DIR
-        assert sources.room(ram_dir / "replay") == sources.ram_free()
-    finally:
-        settings.ram_max_mb = 0
+    ram = admin.get("/api/status").json()["ram"]
+    assert ram["size"] > 0 and ram["used"] >= 0 and "low" in ram
+    full = sh._ntuple_diskusage(512 << 20, 500 << 20, 12 << 20)
+    monkeypatch.setattr(sources.shutil, "disk_usage", lambda p: full)
+    assert admin.get("/api/status").json()["ram"] == {"size": 512 << 20, "used": 500 << 20, "low": True}
+    assert sources.cache_dir(True) == sources.CACHE_DIR  # downloads go to disk meanwhile

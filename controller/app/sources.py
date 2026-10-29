@@ -28,29 +28,23 @@ CACHE_DIR = Path(os.environ.get("CACHE_DIR", "/data/cache"))
 RAM_CACHE_DIR = Path(os.environ.get("RAM_CACHE_DIR", "/ram"))
 
 
-# Settings › "Use at most … MB of RAM" in bytes, 0 = the whole RAM disk; the engine sets it.
-ram_max = lambda: 0  # noqa: E731
-# A download or recording needs at least this much room left in RAM, or it goes to disk.
+# A download or recording needs at least this much room on the RAM disk, or it goes to disk.
 RAM_MIN_FREE = 64 << 20
 
 
-def ram_free() -> int:
-    """Bytes rRadio may still put on the RAM disk: what is free on it, or less under the setting."""
-    usage = shutil.disk_usage(RAM_CACHE_DIR)
-    limit = ram_max()
-    return max(min(usage.free, limit - usage.used), 0) if limit > 0 else usage.free
-
-
-def room(folder: Path) -> int:
-    """Bytes that may still be written to `folder` (on the RAM disk or on disk)."""
-    if folder == RAM_CACHE_DIR or RAM_CACHE_DIR in folder.parents:
-        return ram_free()
-    return shutil.disk_usage(folder).free
+def ram_usage() -> dict | None:
+    """The RAM disk (RAM_CACHE_SIZE) in bytes, and whether it is nearly full (under 15 % or
+    128 MB free), for a warning in the web UI. None without a RAM disk."""
+    if not RAM_CACHE_DIR.is_dir():
+        return None
+    u = shutil.disk_usage(RAM_CACHE_DIR)
+    return {"size": u.total, "used": u.used, "low": u.free < max(u.total * 0.15, 128 << 20)}
 
 
 def cache_dir(in_ram: bool) -> Path:
-    """Where downloads go. Falls back to disk if no RAM disk is mounted, or it is (nearly) full."""
-    if in_ram and RAM_CACHE_DIR.is_dir() and os.access(RAM_CACHE_DIR, os.W_OK) and ram_free() >= RAM_MIN_FREE:
+    """Where downloads go. Falls back to disk if no RAM disk is mounted, or it is nearly full."""
+    if (in_ram and RAM_CACHE_DIR.is_dir() and os.access(RAM_CACHE_DIR, os.W_OK)
+            and shutil.disk_usage(RAM_CACHE_DIR).free >= RAM_MIN_FREE):
         return RAM_CACHE_DIR
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     return CACHE_DIR
