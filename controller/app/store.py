@@ -280,6 +280,21 @@ class Store:
             self._db.execute("UPDATE history SET replay = ? WHERE id = ?",
                              (json.dumps(replay) if replay else "", entry_id))
 
+    def replay_users(self, path: str) -> int:
+        """How many history entries are kept in file `path`."""
+        with self._lock:
+            rows = self._db.execute("SELECT replay FROM history WHERE replay LIKE ?", (f"%{Path(path).name}%",)).fetchall()
+        return sum(1 for (raw,) in rows if json.loads(raw).get("path") == path)
+
+    def move_replay(self, old: str, new: str) -> None:
+        """Points the entries kept in file `old` at `new` (a recording moved to disk)."""
+        with self._lock, self._db:
+            rows = self._db.execute("SELECT id, replay FROM history WHERE replay LIKE ?", (f"%{Path(old).name}%",)).fetchall()
+            for entry_id, raw in rows:
+                info = json.loads(raw)
+                if info.get("path") == old:
+                    self._db.execute("UPDATE history SET replay = ? WHERE id = ?", (json.dumps({**info, "path": new}), entry_id))
+
     def last_cutin(self, channel: str | None = None) -> dict | None:
         """The most recent clip that went on air (filtered-out items excluded)."""
         with self._lock:

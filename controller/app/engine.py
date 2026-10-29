@@ -44,6 +44,9 @@ from .sources import (
     REPLAY_KEEP,
     USER_AGENT,
     cache_dir,
+    ram_usage,
+    RAM_CACHE_DIR,
+    CACHE_DIR,
 )
 from .store import Store
 from .titles import Watchers
@@ -260,6 +263,7 @@ class Engine:
         self.cfg = cfg
         self.store = store
         self.booted = time.time()
+        self._pruned_at = 0.0  # when kept clips past their 24 hours were last deleted
         self.liq = liq
         self.items: list[Item] = []  # cut-ins of every channel
         self.downloads: asyncio.Queue[str] = asyncio.Queue()  # item keys
@@ -438,6 +442,9 @@ class Engine:
             info = {k: v for k, v in info.items() if k != "until"}
             self.store.set_replay(entry_id, {**info, "path": str(target)})
             log.info("Saved %s for later as %s", path.name, target)
+            # Its copy on the RAM disk would otherwise stay for the rest of its 24 hours.
+            if RAM_CACHE_DIR in path.parents and not self.store.replay_users(str(path)):
+                path.unlink(missing_ok=True)
 
     def unsave(self, entry_id: int) -> None:
         """No longer saved: its saved copy goes; a clip fetched again from its source stays."""
@@ -905,6 +912,9 @@ class Engine:
             except Exception:
                 log.exception("tick error")
             self._note_changes()
+            if time.time() - self._pruned_at > 3600:  # otherwise only when something new is kept
+                self._pruned_at = time.time()
+                await asyncio.to_thread(prune_replays, REPLAY_KEEP)
             await asyncio.sleep(TICK)
 
     # --- change tracking for the live feed --------------------------------------
@@ -1113,10 +1123,12 @@ class Engine:
 
     async def _record(self, p: Program, path: Path) -> None:
         """Copies the program's stream into `path` until cancelled, reconnecting after a
-        drop. Stops early when the RAM disk (or disk) gets nearly full."""
+        drop. When the RAM disk gets nearly full, the recording moves to disk and goes on
+        there; it only stops early when the disk is nearly full too."""
         headers = {"User-Agent": USER_AGENT}
         async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(30, read=60)) as client:
-            with path.open("ab") as out:
+            out = path.open("ab")
+            try:
                 while True:
                     try:
                         async with client.stream("GET", p.url, headers=headers) as r:
@@ -1129,14 +1141,45 @@ class Engine:
                                     unchecked = 0
                                     out.flush()
                                     if shutil.disk_usage(path.parent).free < RECORD_MIN_FREE:
-                                        log.warning("Stopped keeping %s: %s is nearly full", p.name, path.parent)
-                                        return
+                                        moved = await self._record_to_disk(p, path, out)
+                                        if not moved:
+                                            log.warning("Stopped keeping %s: %s is nearly full", p.name, path.parent)
+                                            return
+                                        path, out = moved
                     except asyncio.CancelledError:
                         raise
                     except (httpx.HTTPError, OSError) as e:
                         log.info("Keeping %s: stream dropped (%s), reconnecting", p.name, e)
                     out.flush()
                     await asyncio.sleep(5)
+            finally:
+                out.close()
+
+    async def _record_to_disk(self, p: Program, path: Path, out):
+        """Moves a recording from the full RAM disk to the disk cache: (new path, open file),
+        or None when it already is on disk or the disk has no room either. Listeners
+        part way through keep the old file until they load it again."""
+        target = CACHE_DIR / "replay" / path.name
+        if path.parent == target.parent:
+            return None
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if shutil.disk_usage(target.parent).free < RECORD_MIN_FREE + path.stat().st_size:
+                return None
+            out.close()
+            await asyncio.to_thread(shutil.copyfile, path, target)
+        except OSError as e:
+            log.warning("Keeping %s: could not move it to disk (%s)", p.name, e)
+            if out.closed:
+                return path, path.open("ab")
+            return None
+        self.store.move_replay(str(path), str(target))
+        task = asyncio.current_task()
+        if task:  # persist_saved and drop_recording know the recording by this name
+            task.set_name(str(target))
+        path.unlink(missing_ok=True)
+        log.info("Keeping %s: %s is nearly full, recording goes on in %s", p.name, path.parent, target)
+        return target, target.open("ab")
 
     # --- title-triggered programs ------------------------------------------------
 
@@ -1515,6 +1558,8 @@ class Engine:
                 if i.state not in ("playing", "failed")
             ],
             "now": self.now_playing(ch),
+            # The RAM disk filling up: the web UI warns admins to raise RAM_CACHE_SIZE.
+            "ram": ram_usage(),
             "engine_up": self.liq_up and cs.liq is not None,
             "station": station.model_dump() if station else None,
             # The channel's stations, for a picker in the app.

@@ -353,6 +353,10 @@ fieldset.formats input { margin-top: 3px; }
   background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px;
   max-width: calc(100% - 32px); box-shadow: 0 6px 24px rgba(0,0,0,.2); z-index: 10;
 }
+.banner {
+  margin: 0 0 16px; padding: 10px 14px; border-radius: 10px;
+  border: 1px solid var(--warn); color: var(--warn);
+}
 .toast.error { background: var(--bad); color: #fff; }
 
 @media (max-width: 640px) {

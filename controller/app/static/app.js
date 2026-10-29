@@ -392,6 +392,17 @@ function gotStatus(s) {
   advancedAt = Date.now();
   setServerTime(s.time);
   renderStatus();
+  showRamWarning(s.ram);
+}
+
+// Only admins can do something about it (RAM_CACHE_SIZE in .env).
+function showRamWarning(ram) {
+  const el = $("#ram-warn");
+  el.hidden = !(me.admin && ram && ram.low);
+  if (el.hidden) return;
+  const mb = (b) => `${Math.round(b / (1 << 20))} MB`;
+  el.textContent = `The RAM disk is nearly full (${mb(ram.used)} of ${mb(ram.size)}). New downloads and kept programs `
+    + "now go to disk. Raise RAM_CACHE_SIZE in .env (for example to 2g) and run docker compose up -d.";
 }
 
 function connectLive() {
