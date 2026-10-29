@@ -463,8 +463,9 @@ recorded from their stream while they run, into the RAM disk when downloads go
 there (about 60 MB per hour of MP3, so raise `RAM_CACHE_SIZE` to `1g` or more
 for long shows), and the apps can listen back from the program's "started"
 entry, even while it is still on air (the recording answers byte ranges, so the
-apps can drag back along the show and return to live). Recording stops early if
-the RAM disk is nearly full. History entries carry the picture that was shown
+apps can drag back along the show and return to live). When the RAM disk gets
+nearly full, the recording moves to the disk cache and goes on there; it only
+stops early if the disk is nearly full too. History entries carry the picture that was shown
 while they played (`art`), so the apps can show it again when listening back. If rRadio restarts during a program (an update), the program
 goes on: no second "started" entry, and recording continues in the same file
 when it is on disk. A RAM disk is emptied with the container, so there the part

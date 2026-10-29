@@ -401,3 +401,36 @@ def test_history_forgets_unsaved_entries_after_a_week(app_main):
     state.add_history("voice", "Dad", "Today", "played", channel="kid")
     ids = {e["id"] for e in state.history(500, "kid")}
     assert old not in ids and kept in ids
+
+
+def test_a_full_ram_disk_moves_the_recording_to_disk(app_main, ram_dir):
+    import asyncio
+
+    from app.config import Program
+    from app.sources import CACHE_DIR
+
+    engine = app_main.engine
+    ch = engine.config.channels[0]
+    show = Program(name="Live am Morgen", url="http://radio.example/live", keep_day=True)
+    path = ram_dir / "replay" / "program-full.mp3"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    engine.store.add_history("program", show.name, show.name, "started", channel=ch.id,
+                             replay={"path": str(path), "until": 1e12})
+    entry_id = engine.store.history(1, ch.id)[0]["id"]
+
+    async def run():
+        out = path.open("ab")
+        out.write(b"ID3" + b"\0" * 100)
+        out.flush()
+        target, out = await engine._record_to_disk(show, path, out)
+        out.write(b"more")  # the recording goes on in the new file
+        out.close()
+        with target.open("ab") as f:
+            again = await engine._record_to_disk(show, target, f)
+        return target, asyncio.current_task().get_name(), again
+
+    target, name, again = asyncio.run(run())
+    assert target == CACHE_DIR / "replay" / path.name and name == str(target)
+    assert not path.exists() and target.read_bytes() == b"ID3" + b"\0" * 100 + b"more"
+    assert engine.store.replay_of(entry_id)[1]["path"] == str(target)
+    assert again is None  # already on disk: when that is full too, the recording stops
