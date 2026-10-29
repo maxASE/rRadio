@@ -45,6 +45,7 @@ from .sources import (
     USER_AGENT,
     cache_dir,
     ram_usage,
+    RAM_CACHE_DIR,
     CACHE_DIR,
 )
 from .store import Store
@@ -262,6 +263,7 @@ class Engine:
         self.cfg = cfg
         self.store = store
         self.booted = time.time()
+        self._pruned_at = 0.0  # when kept clips past their 24 hours were last deleted
         self.liq = liq
         self.items: list[Item] = []  # cut-ins of every channel
         self.downloads: asyncio.Queue[str] = asyncio.Queue()  # item keys
@@ -440,6 +442,9 @@ class Engine:
             info = {k: v for k, v in info.items() if k != "until"}
             self.store.set_replay(entry_id, {**info, "path": str(target)})
             log.info("Saved %s for later as %s", path.name, target)
+            # Its copy on the RAM disk would otherwise stay for the rest of its 24 hours.
+            if RAM_CACHE_DIR in path.parents and not self.store.replay_users(str(path)):
+                path.unlink(missing_ok=True)
 
     def unsave(self, entry_id: int) -> None:
         """No longer saved: its saved copy goes; a clip fetched again from its source stays."""
@@ -907,6 +912,9 @@ class Engine:
             except Exception:
                 log.exception("tick error")
             self._note_changes()
+            if time.time() - self._pruned_at > 3600:  # otherwise only when something new is kept
+                self._pruned_at = time.time()
+                await asyncio.to_thread(prune_replays, REPLAY_KEEP)
             await asyncio.sleep(TICK)
 
     # --- change tracking for the live feed --------------------------------------

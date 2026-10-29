@@ -342,6 +342,7 @@ def test_saved_for_later_keeps_the_file_on_disk(admin, app_main, ram_dir):
     _, info = app_main.state.replay_of(entry["id"])
     kept = Path(info["path"])
     assert kept.parent == SAVED_DIR and kept.read_bytes() == b"voice" and "until" not in info
+    assert not clip.exists()  # no second copy left taking up RAM
     assert admin.get("/api/saved", params={"channel": app_main.store.config.channels[0].id}).json() == []
     # Taken back: the saved copy goes, and with it the only audio of a voice message.
     assert admin.delete(f"/api/history/{entry['id']}/save").status_code == 200
