@@ -448,3 +448,58 @@ def test_the_status_says_when_the_ram_disk_is_nearly_full(admin, app_main, ram_d
     monkeypatch.setattr(sources.shutil, "disk_usage", lambda p: full)
     assert admin.get("/api/status").json()["ram"] == {"size": 512 << 20, "used": 500 << 20, "low": True}
     assert sources.cache_dir(True) == sources.CACHE_DIR  # downloads go to disk meanwhile
+
+
+def test_listen_again_fetches_clips_in_small_pieces(admin, app_main, monkeypatch):
+    # The video site sends a long Range slowly: a whole clip is fetched in CHUNK pieces and
+    # passed on as one answer, and a player's Range still gets what it asked for.
+    import re
+
+    import httpx
+
+    from app import sources
+    from app.sources import Item
+
+    audio = bytes(range(256)) * 50_000  # 12.8 MB
+    asked = []
+
+    def video(request):
+        if request.url.path == "/latest":
+            return httpx.Response(302, headers={"location": "https://cdn.example/videoplayback"})
+        a, b = map(int, re.fullmatch(r"bytes=(\d+)-(\d+)", request.headers["range"]).groups())
+        asked.append((a, b))
+        return httpx.Response(206, content=audio[a:b + 1], headers={
+            "content-type": "audio/mp4", "content-range": f"bytes {a}-{min(b, len(audio) - 1)}/{len(audio)}"})
+
+    monkeypatch.setattr(sources, "client", lambda timeout=30: httpx.AsyncClient(
+        transport=httpx.MockTransport(video), follow_redirects=True))
+    clip = Item(kind="podcast", source_id="p", source_name="Pod", item_id="e3", title="Long clip",
+                media="https://cdn.example/latest", channel="kid")
+    app_main.engine._finish(clip, "played")
+    entry = next(h for h in admin.get("/api/status", params={"channel": "kid"}).json()["history"] if h["title"] == "Long clip")
+
+    r = admin.get(f"/api/history/{entry['id']}/audio")
+    assert r.status_code == 200
+    assert r.headers["content-length"] == str(len(audio))
+    assert r.content == audio
+    assert all(b - a < sources.CHUNK for a, b in asked)
+
+    asked.clear()
+    r = admin.get(f"/api/history/{entry['id']}/audio", headers={"Range": "bytes=5000000-"})
+    assert r.status_code == 206
+    assert r.headers["content-range"] == f"bytes 5000000-{len(audio) - 1}/{len(audio)}"
+    assert r.content == audio[5_000_000:]
+    assert asked[0][0] == 5_000_000
+
+    r = admin.get(f"/api/history/{entry['id']}/audio", headers={"Range": "bytes=0-1"})
+    assert r.status_code == 206 and r.content == audio[:2]
+
+
+def test_parse_range():
+    from app.sources import parse_range
+
+    assert parse_range("bytes=0-1") == (0, 1)
+    assert parse_range("bytes=100-") == (100, None)
+    assert parse_range("bytes=-500") is None
+    assert parse_range("bytes=0-1,5-9") is None
+    assert parse_range(None) is None

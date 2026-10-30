@@ -34,7 +34,8 @@ from .config import SECRET_MASK, Config, ConfigStore, Podcast, Station, dump
 from .engine import SAVED_DIR, Engine, short_error
 from .liq import Liquidsoap
 from .navidrome import Navidrome
-from .sources import USER_AGENT, Invidious, Item, cache_dir, feed_title, podcast_latest, video_id_from_url
+from .sources import (Invidious, Item, cache_dir, feed_title, parse_range, podcast_latest, relay_in_pieces,
+                      video_id_from_url)
 from .sessions import COOKIE, DAYS
 from .store import Store
 from .titles import peek
@@ -893,9 +894,6 @@ async def voice_message(file: UploadFile = File(...), channel: str = Form("all")
     return {"ok": True, "channels": [c.id for c in targets], "title": it.title}
 
 
-REPLAY_HEADERS = ("content-type", "content-length", "content-range", "accept-ranges")
-
-
 @app.get("/api/history/{entry_id}/audio")
 async def history_audio(entry_id: int, request: Request):
     """"Listen again": the audio of a clip from the history, for one listener only
@@ -924,7 +922,8 @@ async def now_audio(request: Request, channel: str | None = None, key: str | Non
 
 
 async def replay_response(info: dict, request: Request):
-    """Serves a kept file, or fetches the clip again from its source with Range passed on."""
+    """Serves a kept file, or fetches the clip again from its source (in pieces, see
+    relay_in_pieces), answering Range so the player can seek."""
     if info.get("path"):
         return FileResponse(info["path"])
     media_ref = info["media"]
@@ -932,30 +931,15 @@ async def replay_response(info: dict, request: Request):
         urls = [media_ref]
     else:  # a video id; AAC (itag 140), because phones can't play WebM/Opus
         urls = await engine.invidious().audio_urls(media_ref, "140")
-    headers = {"User-Agent": USER_AGENT, "Accept-Encoding": "identity"}
-    if request.headers.get("range"):
-        headers["Range"] = request.headers["range"]
-    client = httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(30, read=60))
+    wanted = parse_range(request.headers.get("range"))
     for url in urls:
         try:
-            upstream = await client.send(client.build_request("GET", url, headers=headers), stream=True)
-        except httpx.HTTPError as e:
+            relay = await relay_in_pieces(url, wanted)
+        except (httpx.HTTPError, RuntimeError) as e:
             log.info("listen again: %s failed: %s", url, e)
             continue
-        if upstream.status_code in (200, 206):
-            async def body(upstream=upstream):
-                try:
-                    async for chunk in upstream.aiter_raw():
-                        yield chunk
-                finally:
-                    await upstream.aclose()
-                    await client.aclose()
-
-            out = {k: v for k, v in upstream.headers.items() if k.lower() in REPLAY_HEADERS}
-            return StreamingResponse(body(), status_code=upstream.status_code, headers=out)
-        log.info("listen again: %s answered %s", url, upstream.status_code)
-        await upstream.aclose()
-    await client.aclose()
+        if relay:
+            return StreamingResponse(relay.body, status_code=relay.status, headers=relay.headers)
     raise HTTPException(502, "the source of this clip didn't answer")
 
 
