@@ -503,3 +503,36 @@ def test_parse_range():
     assert parse_range("bytes=-500") is None
     assert parse_range("bytes=0-1,5-9") is None
     assert parse_range(None) is None
+
+
+def test_a_kept_program_has_its_length_once_it_ended(tmp_path):
+    """The Saved list shows a program's length (and how much is left) before it is played,
+    like a clip's."""
+    import time
+
+    from app.store import Store
+
+    rec = tmp_path / "program-kid-1.mp3"
+    rec.write_bytes(b"ID3")
+    st = Store(tmp_path / "state.db")
+    with st._lock, st._db:  # kept before lengths were written down: an hour and a half
+        st._db.execute("INSERT INTO history (ts, kind, source, title, status, detail, channel, replay)"
+                       " VALUES (1000, 'program', 'Old show', 'Old show', 'started', '', 'kid', ?)",
+                       (json.dumps({"path": str(rec)}),))
+        st._db.execute("INSERT INTO history (ts, kind, source, title, status, detail, channel, replay)"
+                       " VALUES (6400, 'program', 'Old show', 'Old show', 'ended', '', 'kid', '')")
+    st = Store(tmp_path / "state.db")  # a restart fills it in
+    assert [h["duration"] for h in st.history(channel="kid")] == [None, 5400]
+
+    st.add_history("program", "Morgen", "Morgen", "started", channel="kid", replay={"path": str(rec)})
+    assert st.history(channel="kid")[0]["duration"] is None  # still growing
+    started = st.history(channel="kid")[0]["id"]
+    with st._lock, st._db:
+        st._db.execute("UPDATE history SET ts = ts - 600 WHERE id = ?", (started,))
+    st.add_history("program", "Morgen", "Morgen", "ended", channel="kid")
+    assert st.entry(started)["replay"]["duration"] in (600, 601)
+    # A recording that missed the start (a restart during the show) is shorter.
+    st.add_history("program", "Abend", "Abend", "started", channel="kid",
+                   replay={"path": str(rec), "from": time.time() - 120})
+    st.add_history("program", "Abend", "Abend", "ended", channel="kid")
+    assert st.history(channel="kid")[1]["duration"] in (120, 121)

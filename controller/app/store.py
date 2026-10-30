@@ -82,6 +82,12 @@ class Store:
             if "saved" not in cols:
                 # When an app saved the entry for later (0 = not saved); saved entries never age out.
                 self._db.execute("ALTER TABLE history ADD COLUMN saved REAL NOT NULL DEFAULT 0")
+            # Programs kept before their length was written down when they ended.
+            with self._db:
+                for entry_id, channel in self._db.execute(
+                    "SELECT id, channel FROM history WHERE kind = 'program' AND status = 'ended'"
+                ).fetchall():
+                    self._note_program_length(channel, entry_id)
         self.devices = Devices(self._db, self._lock)
         self.sessions = Sessions(self._db, self._lock)
         self.users = Users(self._db, self._lock, os.environ.get("UI_USERNAME", "admin"))
@@ -139,12 +145,36 @@ class Store:
                 "INSERT INTO history (ts, kind, source, title, status, detail, channel, replay) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (time.time(), kind, source, title, status, detail, channel, json.dumps(replay) if replay else ""),
             )
+            if kind == "program" and status == "ended":
+                self._note_program_length(channel)
             # Unsaved entries go after a week (the Week tab, its numbers and search look no
             # further back) and beyond the newest 500; saved ones stay until unsaved.
             self._db.execute(
                 "DELETE FROM history WHERE saved = 0 AND (ts < ? OR id NOT IN (SELECT id FROM history ORDER BY id DESC LIMIT 500))",
                 (time.time() - HISTORY_DAYS * 86400,),
             )
+
+    def _note_program_length(self, channel: str, until: int | None = None) -> None:
+        """Writes the length of a kept program's recording into its "started" entry once the
+        program ended (the entry just before the newest "ended" one, or before `until`), so
+        the apps show it before playing, like a clip's. Called within the lock."""
+        rows = self._db.execute(
+            "SELECT id, ts, status, replay FROM history WHERE kind = 'program' AND channel = ?"
+            " AND (? IS NULL OR id <= ?) ORDER BY id DESC LIMIT 2",
+            (channel, until, until),
+        ).fetchall()
+        if len(rows) < 2 or rows[0][2] != "ended" or rows[1][2] != "started" or not rows[1][3]:
+            return
+        try:
+            info = json.loads(rows[1][3])
+        except ValueError:
+            return
+        if not info.get("path") or info.get("duration"):
+            return
+        length = round(rows[0][1] - (info.get("from") or rows[1][1]))
+        if length > 0:
+            self._db.execute("UPDATE history SET replay = ? WHERE id = ?",
+                             (json.dumps({**info, "duration": length}), rows[1][0]))
 
     _ENTRY = "SELECT id, ts, kind, source, title, status, detail, replay, saved FROM history"
 
