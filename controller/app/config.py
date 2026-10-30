@@ -360,6 +360,11 @@ class Config(BaseModel):
             dup = {x for x in seen if seen.count(x) > 1}
             if dup:
                 raise ValueError(f"two channels use the same {'stream name' if attr == 'mount' else 'id'}: {', '.join(dup)}")
+        # channel() looks a channel up by id, then by stream name: an id that is another
+        # channel's stream name would take that channel's place.
+        clash = [c.id for c in self.channels for o in self.channels if o is not c and c.id == o.mount]
+        if clash:
+            raise ValueError(f"a channel id can't be another channel's stream name: {', '.join(clash)}")
         return self
 
     @model_validator(mode="after")

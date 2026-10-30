@@ -39,6 +39,16 @@ def resolve(rel: str) -> Path:
     return p
 
 
+def resolve_in(rel: str, folder: str) -> Path:
+    """Like resolve(), but the path must also stay inside `folder` (a user's
+    users/<name>/). Checked after resolving, so "users/anna/../bob/x.mp3" is refused."""
+    p = resolve(rel)
+    home = resolve(folder)
+    if p != home and home not in p.parents:
+        raise ValueError("path outside your folder")
+    return p
+
+
 def library() -> dict:
     """All audio files (outside inbox/) and the folders that hold them."""
     if not MEDIA_DIR.exists():

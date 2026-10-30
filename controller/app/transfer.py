@@ -199,6 +199,11 @@ def import_channel(cfg: Config, z: zipfile.ZipFile, name: str = "", owner: str =
     if prefix:
         for s in ch.get("spots") or []:
             s["files"] = [prefix + f for f in s.get("files") or []]
+            for f in s["files"] if folder else []:
+                try:
+                    media.resolve_in(f, folder)
+                except ValueError:
+                    raise ValueError(f"spot {s.get('name')!r} plays a file outside your folder: {f!r}") from None
     nfiles = _write_media(z, prefix)
     _write_images(z)
 
