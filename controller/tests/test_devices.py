@@ -127,7 +127,7 @@ def test_admin_switches_streams_with_data_per_hour(admin, app_main):
 def test_streams_count_listeners_per_format(admin, app_main, monkeypatch):
     monkeypatch.setattr(app_main.engine, "stream_listeners", {"mp3": 3})
     s = {x["id"]: x["listeners"] for x in admin.get("/api/streams").json()["streams"]}
-    assert s == {"mp3": 3, "aac": 0, "opus": 0}
+    assert s == {"mp3": 3, "aac": 0, "opus": 0, "aac48": 0, "aac192": 0}
 
 
 def test_phone_playing_a_clip_again_counts_as_listening(admin, anon, app_main):
