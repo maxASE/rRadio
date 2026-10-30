@@ -34,12 +34,19 @@ RAM_MIN_FREE = 64 << 20
 
 
 def ram_usage() -> dict | None:
-    """The RAM disk (RAM_CACHE_SIZE) in bytes, and whether it is nearly full (under 15 % or
-    128 MB free), for a warning in the web UI. None without a RAM disk."""
+    """The RAM disk (RAM_CACHE_SIZE) in bytes, how much of it kept programs take (the rest
+    is clips and what the radio buffers), and whether it is nearly full (under 15 % or
+    128 MB free), for a warning in the web UI and the apps. None without a RAM disk."""
     if not RAM_CACHE_DIR.is_dir():
         return None
     u = shutil.disk_usage(RAM_CACHE_DIR)
-    return {"size": u.total, "used": u.used, "low": u.free < max(u.total * 0.15, 128 << 20)}
+    kept = 0
+    for f in (RAM_CACHE_DIR / "replay").glob("*"):
+        try:
+            kept += f.stat().st_size
+        except OSError:  # gone meanwhile
+            pass
+    return {"size": u.total, "used": u.used, "kept": min(kept, u.used), "low": u.free < max(u.total * 0.15, 128 << 20)}
 
 
 def cache_dir(in_ram: bool) -> Path:

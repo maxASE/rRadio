@@ -299,7 +299,7 @@ def test_week_lists_programs_and_spots(admin, app_main):
     assert mon["programs"][0]["ran"]["from"] == 22 * 60 + 5 and mon["programs"][0]["ran"]["to"] == 22 * 60 + 55
 
 
-def test_the_clip_on_air_can_be_listened_back(admin, app_main, monkeypatch):
+def test_the_clip_on_air_can_be_listened_back(admin, app_main, monkeypatch, tmp_path):
     from app.sources import Item
 
     eng = app_main.engine
@@ -318,6 +318,12 @@ def test_the_clip_on_air_can_be_listened_back(admin, app_main, monkeypatch):
 
         monkeypatch.setattr(app_main, "replay_response", fake)
         assert admin.get(f"/api/now/audio?channel={cid}&key={it.key}").json() == {"media": "dQw4w9WgXcQ"}
+        # the radio's own copy, when the phone can play it, so it can jump anywhere at once
+        for name, want in (("clip.m4a", True), ("clip.webm", False)):
+            f = tmp_path / name
+            f.write_bytes(b"audio")
+            it.path = str(f)
+            assert eng.now_audio(cid) == ({"path": str(f)} if want else {"media": "dQw4w9WgXcQ"})
     finally:
         eng.items.remove(it)
     assert admin.get(f"/api/now/audio?channel={cid}").status_code == 410
@@ -444,9 +450,14 @@ def test_the_status_says_when_the_ram_disk_is_nearly_full(admin, app_main, ram_d
 
     ram = admin.get("/api/status").json()["ram"]
     assert ram["size"] > 0 and ram["used"] >= 0 and "low" in ram
+    (ram_dir / "replay").mkdir(exist_ok=True)
+    before = sum(f.stat().st_size for f in (ram_dir / "replay").glob("*"))  # left by other tests
+    (ram_dir / "replay" / "show.m4a").write_bytes(b"\0" * 1000)
     full = sh._ntuple_diskusage(512 << 20, 500 << 20, 12 << 20)
     monkeypatch.setattr(sources.shutil, "disk_usage", lambda p: full)
-    assert admin.get("/api/status").json()["ram"] == {"size": 512 << 20, "used": 500 << 20, "low": True}
+    ram = admin.get("/api/status").json()["ram"]
+    assert ram == {"size": 512 << 20, "used": 500 << 20, "kept": before + 1000, "low": True}
+    (ram_dir / "replay" / "show.m4a").unlink()
     assert sources.cache_dir(True) == sources.CACHE_DIR  # downloads go to disk meanwhile
 
 
