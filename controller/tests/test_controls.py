@@ -450,9 +450,14 @@ def test_the_status_says_when_the_ram_disk_is_nearly_full(admin, app_main, ram_d
 
     ram = admin.get("/api/status").json()["ram"]
     assert ram["size"] > 0 and ram["used"] >= 0 and "low" in ram
+    (ram_dir / "replay").mkdir(exist_ok=True)
+    before = sum(f.stat().st_size for f in (ram_dir / "replay").glob("*"))  # left by other tests
+    (ram_dir / "replay" / "show.m4a").write_bytes(b"\0" * 1000)
     full = sh._ntuple_diskusage(512 << 20, 500 << 20, 12 << 20)
     monkeypatch.setattr(sources.shutil, "disk_usage", lambda p: full)
-    assert admin.get("/api/status").json()["ram"] == {"size": 512 << 20, "used": 500 << 20, "low": True}
+    ram = admin.get("/api/status").json()["ram"]
+    assert ram == {"size": 512 << 20, "used": 500 << 20, "kept": before + 1000, "low": True}
+    (ram_dir / "replay" / "show.m4a").unlink()
     assert sources.cache_dir(True) == sources.CACHE_DIR  # downloads go to disk meanwhile
 
 
