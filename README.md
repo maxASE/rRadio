@@ -267,13 +267,17 @@ Many apps cache such pictures, so it may not change there live.
 
 ## Stream formats
 
-Pick them in **Settings → Stream formats**. You can run several at once.
+Pick them in **Settings → Stream formats** (or in the iPhone app under Admin › Streams).
+You can run several at once; each one costs a little CPU per channel. One hour of
+listening uses about 0.45 MB per kbps, e.g. 58 MB per hour for MP3 128.
 
 | Format | Mount | Good for |
 |---|---|---|
 | MP3 128 kbps (default) | `/radio.mp3` | Plays everywhere: VLC, browsers, Home Assistant, Sonos, car apps |
 | AAC (HE-AAC) 96 kbps | `/radio.aac` | Same quality at less data; nice for phones over Tailscale |
 | Opus 96 kbps | `/radio.opus` | Best quality per bit; some speakers and cars can't play it |
+| AAC (HE-AAC) 48 kbps | `/radio.aac48` | Data saver, about 22 MB per hour: fine for talk and news on mobile data |
+| AAC 192 kbps | `/radio.aac192` | Best, about 86 MB per hour: for your own music; radio stations rarely send more than 128 |
 
 Other channels use their own stream name instead of `radio`, e.g. `/anna.aac`.
 
@@ -349,7 +353,7 @@ plain HTTP unless a server is explicitly allowed. Pick one of these:
   so every channel's stream goes to Icecast:
 
   ```nginx
-  location ~ ^/[a-z0-9_-]+\.(mp3|aac|opus)$ {
+  location ~ ^/[a-z0-9_-]+\.(mp3|aac|aac48|aac192|opus)$ {
       proxy_pass http://<server IP>:8000;
       proxy_buffering off;
       proxy_read_timeout 24h;

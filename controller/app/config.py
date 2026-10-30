@@ -20,9 +20,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 CONFIG_PATH = Path(os.environ.get("CONFIG_PATH", "/data/config.yaml"))
 
-STREAM_FORMATS = ["mp3", "aac", "opus"]
+STREAM_FORMATS = ["mp3", "aac", "opus", "aac48", "aac192"]
 # Each stream's codec and bitrate as radio.liq encodes it: keep the two in step.
-STREAM_INFO = {"mp3": ("MP3", 128), "aac": ("AAC", 96), "opus": ("Opus", 96)}
+STREAM_INFO = {"mp3": ("MP3", 128), "aac": ("AAC", 96), "opus": ("Opus", 96),
+               "aac48": ("AAC", 48), "aac192": ("AAC", 192)}
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
@@ -295,7 +296,7 @@ _RESERVED_MOUNTS = {"admin", "status", "status-json", "server_version", "style"}
 class Channel(BaseModel):
     """One radio stream of its own, e.g. one per family member.
 
-    It plays at /<mount>.mp3 (and .aac/.opus), with its own stations,
+    It plays at /<mount>.mp3 (and .aac/.opus/.aac48/.aac192), with its own stations,
     programs and spots. It cuts in new items from the video channels and
     podcasts listed in `sources` (the ticks under Sources). `all_sources` is
     from older configs: it is turned into a list of all the owner's sources

@@ -152,6 +152,9 @@ def make_channel(c) =
   icecast_out(%mp3(bitrate = 128, samplerate = 44100), "mp3", c.mount, c.name, radio)
   icecast_out(%fdkaac(bitrate = 96, aot = "mpeg4_he_aac"), "aac", c.mount, c.name, radio)
   icecast_out(%ogg(%opus(bitrate = 96)), "opus", c.mount, c.name, radio)
+  # Data saver (HE-AAC suits low bitrates) and best (plain AAC suits high ones).
+  icecast_out(%fdkaac(bitrate = 48, aot = "mpeg4_he_aac"), "aac48", c.mount, c.name, radio)
+  icecast_out(%fdkaac(bitrate = 192, aot = "mpeg4_aac_lc"), "aac192", c.mount, c.name, radio)
 
   def status() =
     cur = cutin.current()

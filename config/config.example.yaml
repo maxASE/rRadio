@@ -11,13 +11,13 @@ settings:
   live_wait_hours: 24            # keep trying lives and failed video downloads this long
   ytdlp_fallback: false          # Fetch from the video site directly if Invidious fails
   video_audio: small           # small (Opus ~70 kbps) or aac (128 kbps)
-  streams: [mp3]                 # any of: mp3, aac, opus
+  streams: [mp3]                 # any of: mp3, aac, opus, aac48, aac192
   navidrome_url: http://host.docker.internal:4533
   navidrome_user: max
   navidrome_password: ""         # or NAVIDROME_PASSWORD in .env
   navidrome_bitrate: 192         # MP3 kbps; 0 = original files
 
-# Each channel is its own stream at /<mount>.mp3 (and .aac/.opus).
+# Each channel is its own stream at /<mount>.mp3 (and .aac/.opus/.aac48/.aac192).
 channels:
   - id: main
     name: Pirate Radio

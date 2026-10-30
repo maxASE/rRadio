@@ -657,7 +657,7 @@ function renderChannelStatus() {
   $("#listen-links").replaceChildren(
     ...Object.entries(s.streams).map(([fmt, url]) =>
       el("li", {},
-        el("strong", {}, fmt.toUpperCase()),
+        el("strong", {}, fmt.toUpperCase().replace(/^AAC(\d+)$/, "AAC $1")),
         el("code", {}, url),
         el("button", { class: "small-btn", onclick: () => copy(url) }, "Copy"),
         el("a", { href: `/listen.m3u?fmt=${fmt}${q}`, class: "small" }, ".m3u"),
