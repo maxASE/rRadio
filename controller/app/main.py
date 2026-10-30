@@ -34,8 +34,8 @@ from .config import SECRET_MASK, Config, ConfigStore, Podcast, Station, dump
 from .engine import SAVED_DIR, Engine, short_error
 from .liq import Liquidsoap
 from .navidrome import Navidrome
-from .sources import (Invidious, Item, cache_dir, feed_title, parse_range, podcast_latest, relay_in_pieces,
-                      video_id_from_url)
+from .sources import (RAM_CACHE_DIR, Invidious, Item, cache_dir, feed_title, parse_range, podcast_latest, relay_in_pieces,
+                      ram_usage, video_id_from_url)
 from .sessions import COOKIE, DAYS
 from .store import Store
 from .titles import peek
@@ -933,6 +933,25 @@ async def history_audio(entry_id: int, request: Request):
     if channel:
         listen_channel(channel)
     return await replay_response(info, request)
+
+
+@app.get("/api/ram")
+async def ram():
+    """The radio's RAM disk for the admin: size, use, and each kept program in it with its
+    size, biggest first. 404 without a RAM disk."""
+    usage = ram_usage()
+    if not usage:
+        raise HTTPException(404, "the radio has no RAM disk")
+    files = []
+    for f in (RAM_CACHE_DIR / "replay").glob("*"):
+        try:
+            files.append((str(f), f.stat().st_size))
+        except OSError:  # gone meanwhile
+            pass
+    owners = state.replay_owners([p for p, _ in files])
+    shows = [{"title": owners.get(p, {}).get("title") or Path(p).stem, "channel": owners.get(p, {}).get("channel") or "",
+              "since": owners.get(p, {}).get("ts"), "size": size} for p, size in files]
+    return {**usage, "shows": sorted(shows, key=lambda s: -s["size"])}
 
 
 @app.get("/api/now/audio")

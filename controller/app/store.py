@@ -320,6 +320,18 @@ class Store:
             rows = self._db.execute("SELECT replay FROM history WHERE replay LIKE ?", (f"%{Path(path).name}%",)).fetchall()
         return sum(1 for (raw,) in rows if json.loads(raw).get("path") == path)
 
+    def replay_owners(self, paths: list[str]) -> dict[str, dict]:
+        """For each kept file in `paths`, the first history entry kept in it (title, channel, ts)."""
+        names = {Path(p).name for p in paths}
+        found: dict[str, dict] = {}
+        with self._lock:
+            rows = self._db.execute("SELECT ts, title, channel, replay FROM history WHERE replay != '' ORDER BY ts").fetchall()
+        for ts, title, channel, raw in rows:
+            path = json.loads(raw).get("path")
+            if path in paths and path not in found and Path(path).name in names:
+                found[path] = {"title": title, "channel": channel, "ts": ts}
+        return found
+
     def move_replay(self, old: str, new: str) -> None:
         """Points the entries kept in file `old` at `new` (a recording moved to disk)."""
         with self._lock, self._db:

@@ -547,3 +547,21 @@ def test_a_kept_program_has_its_length_once_it_ended(tmp_path):
                    replay={"path": str(rec), "from": time.time() - 120})
     st.add_history("program", "Abend", "Abend", "ended", channel="kid")
     assert st.history(channel="kid")[1]["duration"] in (120, 121)
+
+
+def test_the_admin_sees_what_fills_the_ram(admin, app_main, ram_dir):
+    st = app_main.state
+    (ram_dir / "replay").mkdir(exist_ok=True)
+    show = ram_dir / "replay" / "morning-show.m4a"
+    show.write_bytes(b"\0" * 3000)
+    with st._lock, st._db:
+        st._db.execute("INSERT INTO history (ts, kind, source, title, status, detail, channel, replay)"
+                       " VALUES (?, 'program', 'Morning', 'Morning show', 'started', '', 'main', ?)",
+                       (1000.0, json.dumps({"path": str(show)})))
+    try:
+        ram = admin.get("/api/ram").json()
+        assert ram["size"] > 0 and "low" in ram
+        mine = next(s for s in ram["shows"] if s["size"] == 3000)
+        assert mine == {"title": "Morning show", "channel": "main", "since": 1000.0, "size": 3000}
+    finally:
+        show.unlink()
