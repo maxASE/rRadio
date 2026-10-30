@@ -228,6 +228,7 @@ def _versioned_index() -> str:
 
 
 INDEX_HTML = _versioned_index()
+FALLBACK_ART = (STATIC / "apple-touch-icon.png").read_bytes()
 
 
 @app.get("/", include_in_schema=False)
@@ -338,15 +339,20 @@ async def events(request: Request, channel: str | None = None):
 
     async def feed():
         started, seen = time.monotonic(), -1
-        yield "retry: 3000\n\n"
-        while time.monotonic() - started < EVENTS_MAX and not await request.is_disconnected():
-            if engine.version != seen:
-                seen = engine.version
-                data = build_status(request, channel, a) if a.admin or channel else empty_status()
-                yield f"data: {json.dumps(data, default=str)}\n\n"
-            else:
-                yield ": ping\n\n"
-            await engine.wait_change(seen, EVENTS_PING)
+        engine.feeds += 1
+        try:
+            yield "retry: 3000\n\n"
+            engine.note_changes()  # the change check only runs while a feed is open
+            while time.monotonic() - started < EVENTS_MAX and not await request.is_disconnected():
+                if engine.version != seen:
+                    seen = engine.version
+                    data = build_status(request, channel, a, shared=True) if a.admin or channel else empty_status()
+                    yield f"data: {json.dumps(data, default=str)}\n\n"
+                else:
+                    yield ": ping\n\n"
+                await engine.wait_change(seen, EVENTS_PING)
+        finally:
+            engine.feeds -= 1
 
     return StreamingResponse(feed(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -359,8 +365,13 @@ def empty_status() -> dict:
             "time": engine.now().isoformat()}
 
 
-def build_status(request: Request, channel: str | None, a: Access) -> dict:
-    data = engine.status(channel)
+def build_status(request: Request, channel: str | None, a: Access, shared: bool = False) -> dict:
+    """The status as this person may see it. With `shared`, it starts from the copy every
+    live feed shares (built once per change), so only what is changed here is copied."""
+    data = dict(engine.shared_status(channel) if shared else engine.status(channel))
+    data["channels"] = [dict(c) for c in data.get("channels", [])]
+    if data.get("channel"):
+        data["channel"] = dict(data["channel"])
     cfg = store.config
     if not a.admin:
         listen = {c.id for c in cfg.channels if a.can_listen(c)}
@@ -412,7 +423,7 @@ async def put_config(body: dict):
     except ValidationError as e:
         raise HTTPException(422, detail=[{"loc": ".".join(map(str, x["loc"])), "msg": x["msg"]} for x in e.errors()])
     old_sources = {s.id for s in store.config.video + store.config.podcasts}
-    cfg = store.save(cfg)
+    cfg = await run_in_threadpool(store.save, cfg)  # a whole YAML rewrite: not on the event loop
     engine.write_channels()
     for s in cfg.video + cfg.podcasts:
         if s.id not in old_sources:
@@ -461,7 +472,7 @@ async def import_file(file: UploadFile = File(...), name: str = Form(""), replac
         raise HTTPException(422, "; ".join(f"{'.'.join(map(str, x['loc']))}: {x['msg']}" for x in e.errors()))
     except (ValueError, KeyError, yaml.YAMLError) as e:
         raise HTTPException(400, str(e))
-    cfg = store.save(cfg)
+    cfg = await run_in_threadpool(store.save, cfg)  # a whole YAML rewrite: not on the event loop
     engine.write_channels()
     for s in cfg.video + cfg.podcasts:
         if s.id not in old_sources:
@@ -509,7 +520,7 @@ async def choose_station(body: StationChoice):
     if body.id not in {s.id for s in ch.stations}:
         raise HTTPException(404, "unknown station")
     ch.current_station = body.id
-    store.save(cfg)
+    await run_in_threadpool(store.save, cfg)
     return {"ok": True, "id": body.id}
 
 
@@ -699,11 +710,11 @@ async def art_now(channel: str):
     if path.startswith("/api/images/"):
         f = image_file(path.rsplit("/", 1)[-1])
         if f:
-            image = (f.read_bytes(), mimetypes.guess_type(f.name)[0] or "application/octet-stream")
+            image = (await run_in_threadpool(f.read_bytes), mimetypes.guess_type(f.name)[0] or "application/octet-stream")
     elif path.startswith("/api/art/"):
         image = await engine.art.get(path.rsplit("/", 1)[-1])
     if image is None:
-        image = ((STATIC / "apple-touch-icon.png").read_bytes(), "image/png")
+        image = (FALLBACK_ART, "image/png")
     data, ctype = image
     headers = {"Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
                "X-Content-Type-Options": "nosniff"}
@@ -1203,7 +1214,7 @@ async def remove_user(uid: str):
     for s in data["video"] + data["podcasts"]:
         if s["owner"] == uid:
             s["owner"] = ""
-    store.save(Config.model_validate(data))
+    await run_in_threadpool(store.save, Config.model_validate(data))
     await run_in_threadpool(users.delete, uid)
     await run_in_threadpool(sessions.end_user, uid)
     await run_in_threadpool(devices.delete_user, uid)

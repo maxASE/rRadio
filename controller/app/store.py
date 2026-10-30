@@ -44,6 +44,10 @@ class Store:
     def __init__(self, path: Path = DB_PATH):
         path.parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(path, check_same_thread=False)
+        # Write-ahead log: a write no longer waits for a full sync of the database file,
+        # which keeps the many small writes (history, seen items) quick on an SD card.
+        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA synchronous=NORMAL")
         self._lock = threading.Lock()
         with self._lock:
             self._db.executescript(

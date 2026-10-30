@@ -43,6 +43,7 @@ from .sources import (
     purge_cache,
     REPLAY_KEEP,
     USER_AGENT,
+    close_shared,
     cache_dir,
     ram_usage,
     RAM_CACHE_DIR,
@@ -70,6 +71,7 @@ _WAIT_FIELDS = ("kind", "source_id", "source_name", "item_id", "title", "media",
 HOLD_MAX = 600  # a spot waits at most this long for a song change
 RECORD_MIN_FREE = 64 << 20  # a kept program stops recording when less space than this is left
 RESTART_EVERY = 30  # seconds between Liquidsoap restarts for channel changes
+DOWNLOAD_WORKERS = 3  # clips downloaded at once, so one slow video doesn't hold up the rest
 
 
 @dataclass
@@ -286,6 +288,10 @@ class Engine:
         self._signature: str | None = None
         self._waiting_rev = 0
         self._changed = asyncio.Event()
+        self._written = ""  # the channel list last written for Liquidsoap
+        self.feeds = 0  # open live feeds (/api/events); the change check only runs while there are any
+        self._status_cache: dict[str | None, dict] = {}
+        self._status_version = -1
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -296,7 +302,9 @@ class Engine:
         except OSError as e:
             log.warning("media folder %s is not writable: %s", MEDIA_DIR, e)
         self.write_channels()
-        for coro in (self._tick_loop(), self._poll_loop(), self._download_loop(), self._icecast_loop(), self._inbox_loop(), self._waiting_loop()):
+        loops = [self._tick_loop(), self._poll_loop(), self._icecast_loop(), self._inbox_loop(), self._waiting_loop()]
+        loops += [self._download_loop() for _ in range(DOWNLOAD_WORKERS)]
+        for coro in loops:
             self._tasks.append(asyncio.create_task(coro))
 
     async def stop(self) -> None:
@@ -305,6 +313,7 @@ class Engine:
         for cs in self.channels.values():
             self._stop_recording(cs)
         self.titles.stop()
+        await close_shared()
 
     @property
     def config(self) -> Config:
@@ -331,21 +340,30 @@ class Engine:
     def _channel_sig(self) -> list[dict]:
         return [{"id": c.id, "mount": c.mount, "name": c.name} for c in self.config.channels]
 
+    @staticmethod
+    def _streams_of(channels: list[dict]) -> list[tuple]:
+        """What a Liquidsoap restart is needed for: channels and their stream names. A new
+        name alone isn't worth cutting off every listener; it is used after the next restart."""
+        return [(c["id"], c.get("mount")) for c in channels]
+
     def write_channels(self) -> None:
         """The channel list Liquidsoap reads when it starts."""
         data = json.dumps(self._channel_sig())
+        if data == self._written:
+            return
         try:
             if not CHANNELS_FILE.exists() or CHANNELS_FILE.read_text() != data:
                 tmp = CHANNELS_FILE.with_suffix(".tmp")
                 tmp.write_text(data)
                 tmp.replace(CHANNELS_FILE)
+            self._written = data
         except OSError as e:
             log.warning("cannot write %s: %s", CHANNELS_FILE, e)
 
     async def _sync_channels(self, liq_channels: list[dict]) -> bool:
         """Restart Liquidsoap when its channels differ from the config. True if restarting."""
-        have = [{"id": c["id"], "mount": c.get("mount"), "name": c.get("name")} for c in liq_channels]
-        if have == self._channel_sig():
+        if self._streams_of(liq_channels) == self._streams_of(self._channel_sig()):
+            self.write_channels()  # a renamed channel: picked up at the next restart
             return False
         if time.time() < self._restart_at:
             return True
@@ -420,7 +438,7 @@ class Engine:
         slots = sorted(((i.priority, i.arrived) for i in picked), key=lambda s: (-s[0], s[1]))
         for it, (priority, arrived) in zip(picked, slots):
             it.priority, it.arrived = priority, arrived
-        self._note_changes()
+        self.note_changes()
         return len(picked)
 
     def persist_saved(self) -> None:
@@ -911,7 +929,8 @@ class Engine:
                     cs.liq = None
             except Exception:
                 log.exception("tick error")
-            self._note_changes()
+            if self.feeds:
+                self.note_changes()
             if time.time() - self._pruned_at > 3600:  # otherwise only when something new is kept
                 self._pruned_at = time.time()
                 await asyncio.to_thread(prune_replays, REPLAY_KEEP)
@@ -921,7 +940,7 @@ class Engine:
 
     _VOLATILE = ("cutin_elapsed", "cutin_remaining", "since")  # the UI counts these up itself
 
-    def _note_changes(self) -> None:
+    def note_changes(self) -> None:
         chans = {}
         for cid, cs in self.channels.items():
             liq = {k: v for k, v in (cs.liq or {}).items() if k not in self._VOLATILE}
@@ -934,6 +953,15 @@ class Engine:
             self.version += 1
             ev, self._changed = self._changed, asyncio.Event()
             ev.set()
+
+    def shared_status(self, cid: str | None) -> dict:
+        """status(), built once per change and shared by every open live feed (callers copy
+        what they change). Elapsed times in it don't move; the apps count those up."""
+        if self._status_version != self.version:
+            self._status_cache, self._status_version = {}, self.version
+        if cid not in self._status_cache:
+            self._status_cache[cid] = self.status(cid)
+        return self._status_cache[cid]
 
     async def wait_change(self, version: int, timeout: float) -> None:
         """Return as soon as the version moves past `version`, or after `timeout` seconds."""
@@ -1502,7 +1530,7 @@ class Engine:
         """Hold news, spots and new clips on a channel until `until` (None ends it)."""
         cs = self.state(cid)
         cs.quiet_until = until if until and until > time.time() else 0.0
-        self._note_changes()
+        self.note_changes()
         return cs.quiet_until or None
 
     def config_images(self) -> dict:
@@ -1542,22 +1570,21 @@ class Engine:
             return {"now": {"mode": "offline"}, "engine_up": self.liq_up, "channels": [], "queue": [], "history": []}
         cs = self.state(ch.id)
         station = ch.station()
+        now = {c.id: self.now_playing(c) for c in cfg.channels}
+        queue = sorted(self.items, key=lambda i: (-i.priority, i.arrived))
+        images = self.config_images()
         return {
             "channel": {"id": ch.id, "name": ch.name, "mount": ch.mount},
             "channels": [
-                {"id": c.id, "name": c.name, "mount": c.mount, "mode": self.now_playing(c)["mode"],
-                 "now": self.now_playing(c), "next_program": next_program(c, self.now()),
+                {"id": c.id, "name": c.name, "mount": c.mount, "mode": now[c.id]["mode"],
+                 "now": now[c.id], "next_program": next_program(c, self.now()),
                  "next_spot": self.next_spot_of(c),
                  "windows": self.open_windows(c),
                  "listeners": self.state(c.id).listeners}
                 for c in cfg.channels
             ],
-            "incoming": [
-                {**i.public(), "channel": i.channel}
-                for i in sorted(self.items, key=lambda i: (-i.priority, i.arrived))
-                if i.state not in ("playing", "failed")
-            ],
-            "now": self.now_playing(ch),
+            "incoming": [{**i.public(), "channel": i.channel} for i in queue if i.state not in ("playing", "failed")],
+            "now": now[ch.id],
             # The RAM disk filling up: the web UI warns admins to raise RAM_CACHE_SIZE.
             "ram": ram_usage(),
             "engine_up": self.liq_up and cs.liq is not None,
@@ -1569,13 +1596,13 @@ class Engine:
             ],
             "current_station": ch.current_station,
             "next_program": next_program(ch, self.now()),
-            "queue": [i.public() for i in sorted(self.items, key=lambda i: (-i.priority, i.arrived)) if i.channel == ch.id],
+            "queue": [i.public() for i in queue if i.channel == ch.id],
             "sources": self.source_state,
             # Live videos and failed downloads that cut in once Invidious can play them.
             "waiting": self.waiting_for(ch),
             "spots": self.spot_status(ch),
-            "images": self.config_images(),
-            "image_errors": {u: e for u in self.config_images() if (e := self.art.error(u))},
+            "images": images,
+            "image_errors": {u: e for u in images if (e := self.art.error(u))},
             "programs": self.program_status(ch),
             "windows": self.open_windows(ch),
             "listeners": cs.listeners,
