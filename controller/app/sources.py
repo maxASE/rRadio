@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import time
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -129,6 +130,26 @@ def client(timeout: float = 30) -> httpx.AsyncClient:
     )
 
 
+# One client per event loop (and factory, which tests replace) for short API calls, so
+# polls of Invidious, feeds and the music server reuse their connections.
+_shared: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict]" = weakref.WeakKeyDictionary()
+
+
+def shared(factory: Callable[[], httpx.AsyncClient] | None = None) -> httpx.AsyncClient:
+    """The shared client made by `factory` (default: client()). Never close it."""
+    factory = factory or client
+    per_loop = _shared.setdefault(asyncio.get_running_loop(), {})
+    c = per_loop.get(factory)
+    if c is None or c.is_closed:
+        c = per_loop[factory] = factory()
+    return c
+
+
+async def close_shared() -> None:
+    for c in _shared.pop(asyncio.get_running_loop(), {}).values():
+        await c.aclose()
+
+
 # --- Invidious -------------------------------------------------------------
 
 
@@ -171,10 +192,9 @@ class Invidious:
         return _avatars[ucid]
 
     async def _get(self, path: str, **params) -> dict | list:
-        async with client() as c:
-            r = await c.get(f"{self.base}{path}", params=params)
-            r.raise_for_status()
-            return r.json()
+        r = await shared().get(f"{self.base}{path}", params=params)
+        r.raise_for_status()
+        return r.json()
 
     async def stats(self) -> dict:
         return await self._get("/api/v1/stats")
@@ -335,9 +355,8 @@ def _parse_duration(v) -> float | None:
 
 
 async def podcast_latest(p: Podcast) -> list[Item]:
-    async with client() as c:
-        r = await c.get(p.url)
-        r.raise_for_status()
+    r = await shared().get(p.url)
+    r.raise_for_status()
     feed = feedparser.parse(r.content)
     cover = (feed.feed.get("image") or {}).get("href", "")
     items = []
@@ -366,9 +385,8 @@ async def podcast_latest(p: Podcast) -> list[Item]:
 
 
 async def feed_title(url: str) -> str:
-    async with client() as c:
-        r = await c.get(url)
-        r.raise_for_status()
+    r = await shared().get(url)
+    r.raise_for_status()
     return feedparser.parse(r.content).feed.get("title", "")
 
 
@@ -557,7 +575,12 @@ async def _ytdlp(video_id: str, stem: Path) -> Path:
         "-o", f"{stem}.%(ext)s", "--", video_id,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
-    _, err = await proc.communicate()
+    try:
+        _, err = await asyncio.wait_for(proc.communicate(), DOWNLOAD_DEADLINE)
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError(f"yt-dlp took longer than {DOWNLOAD_DEADLINE // 60} minutes") from None
     if proc.returncode != 0:
         raise RuntimeError(err.decode(errors="replace").strip()[-300:])
     found = [p for p in stem.parent.glob(stem.name + ".*") if not p.name.endswith(".part")]

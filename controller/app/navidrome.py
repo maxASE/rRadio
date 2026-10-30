@@ -10,7 +10,7 @@ import secrets
 from dataclasses import dataclass, field
 
 from .config import BaseSource, Settings
-from .sources import client
+from .sources import client, shared
 
 API_VERSION = "1.16.1"
 
@@ -85,15 +85,15 @@ class Navidrome:
         return data
 
     async def _request(self, endpoint: str, params: dict) -> dict:
-        async with client() as c:
-            try:
-                r = await c.get(f"{self.base}/rest/{endpoint}", params={**self._auth(), "f": "json", **params})
-                r.raise_for_status()
-                body = r.json()
-            except ValueError:
-                raise RuntimeError(f"{self.base} answered, but not with Subsonic JSON. Check the URL.") from None
-            except Exception as e:
-                raise RuntimeError(scrub(f"{type(e).__name__}: {e}")) from None
+        c = shared(client)  # reused connections; client is what tests replace
+        try:
+            r = await c.get(f"{self.base}/rest/{endpoint}", params={**self._auth(), "f": "json", **params})
+            r.raise_for_status()
+            body = r.json()
+        except ValueError:
+            raise RuntimeError(f"{self.base} answered, but not with Subsonic JSON. Check the URL.") from None
+        except Exception as e:
+            raise RuntimeError(scrub(f"{type(e).__name__}: {e}")) from None
         return body.get("subsonic-response", {})
 
     async def ping(self) -> str:
