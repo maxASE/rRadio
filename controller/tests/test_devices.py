@@ -1,5 +1,6 @@
 """App pairing and what a limited device may do."""
 
+import httpx
 import pytest
 
 
@@ -86,3 +87,38 @@ def test_member_quiets_its_channel_until_morning(admin, anon, app_main):
     assert anon.post("/api/quiet", headers=auth, json={"channel": "kid", "until": None}).json()["quiet_until"] is None
     assert anon.get("/api/status?channel=kid", headers=auth).json()["quiet_until"] is None
     assert anon.post("/api/quiet", headers=auth, json={"channel": "kid", "until": 5}).json()["quiet_until"] is None
+
+
+def test_health_is_for_admins_and_checks_invidious_once_a_minute(admin, anon, app_main, monkeypatch):
+    calls = []
+
+    async def get(self, url, **kw):
+        calls.append(url)
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+    monkeypatch.setattr(app_main, "_invidious_check", (0.0, {}))
+    h = admin.get("/api/health").json()
+    assert h["invidious"]["ok"] is False and "refused" in h["invidious"]["error"]
+    assert h["disk"]["size"] > 0 and isinstance(h["disk"]["ok"], bool)
+    assert h["stream"]["channels"] == len(h["listeners"]) and h["stream"]["ok"] is False  # no engine in tests
+    assert {"channel", "name", "listeners"} <= set(h["listeners"][0])
+    admin.get("/api/health")
+    assert len(calls) == 1 and calls[0].endswith("/api/v1/stats")
+
+    d = pair(admin, anon, role="member")
+    assert anon.get("/api/health", headers={"Authorization": f"Bearer {d['token']}"}).status_code == 403
+
+
+def test_admin_switches_streams_with_data_per_hour(admin, app_main):
+    old = list(app_main.store.config.settings.streams)
+    try:
+        s = admin.put("/api/streams", json={"on": ["aac", "mp3"]}).json()["streams"]
+        mp3 = next(x for x in s if x["id"] == "mp3")
+        assert mp3 == {"id": "mp3", "format": "MP3", "kbps": 128, "mb_per_hour": 58, "on": True}
+        assert [x["id"] for x in s if x["on"]] == ["mp3", "aac"]
+        assert app_main.store.config.settings.streams == ["mp3", "aac"]
+        assert admin.put("/api/streams", json={"on": []}).status_code == 422
+        assert admin.put("/api/streams", json={"on": ["flac"]}).status_code == 422
+    finally:
+        admin.put("/api/streams", json={"on": old})
