@@ -1000,16 +1000,19 @@ async def health():
 
 def streams_list() -> dict:
     on = set(store.config.settings.streams)
+    heard = engine.stream_listeners  # None while Icecast can't be asked
     return {"streams": [{"id": f, "format": STREAM_INFO[f][0], "kbps": STREAM_INFO[f][1],
                          # 1 kbit/s for an hour is 0.45 MB.
-                         "mb_per_hour": round(STREAM_INFO[f][1] * 0.45), "on": f in on}
+                         "mb_per_hour": round(STREAM_INFO[f][1] * 0.45), "on": f in on,
+                         "listeners": None if heard is None else heard.get(f, 0)}
                         for f in STREAM_FORMATS]}
 
 
 @app.get("/api/streams")
 async def get_streams():
     """The streams the radio can make for every channel, with their bitrate, data per
-    hour of listening and whether they are on (Settings › Stream formats on the web)."""
+    hour of listening, whether they are on (Settings › Stream formats on the web) and
+    how many listen to each, over all channels (null while Icecast can't be asked)."""
     return streams_list()
 
 

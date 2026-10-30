@@ -115,10 +115,16 @@ def test_admin_switches_streams_with_data_per_hour(admin, app_main):
     try:
         s = admin.put("/api/streams", json={"on": ["aac", "mp3"]}).json()["streams"]
         mp3 = next(x for x in s if x["id"] == "mp3")
-        assert mp3 == {"id": "mp3", "format": "MP3", "kbps": 128, "mb_per_hour": 58, "on": True}
+        assert mp3 == {"id": "mp3", "format": "MP3", "kbps": 128, "mb_per_hour": 58, "on": True, "listeners": None}
         assert [x["id"] for x in s if x["on"]] == ["mp3", "aac"]
         assert app_main.store.config.settings.streams == ["mp3", "aac"]
         assert admin.put("/api/streams", json={"on": []}).status_code == 422
         assert admin.put("/api/streams", json={"on": ["flac"]}).status_code == 422
     finally:
         admin.put("/api/streams", json={"on": old})
+
+
+def test_streams_count_listeners_per_format(admin, app_main, monkeypatch):
+    monkeypatch.setattr(app_main.engine, "stream_listeners", {"mp3": 3})
+    s = {x["id"]: x["listeners"] for x in admin.get("/api/streams").json()["streams"]}
+    assert s == {"mp3": 3, "aac": 0, "opus": 0}
