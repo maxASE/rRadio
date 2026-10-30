@@ -21,6 +21,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 CONFIG_PATH = Path(os.environ.get("CONFIG_PATH", "/data/config.yaml"))
 
 STREAM_FORMATS = ["mp3", "aac", "opus"]
+# Each stream's codec and bitrate as radio.liq encodes it: keep the two in step.
+STREAM_INFO = {"mp3": ("MP3", 128), "aac": ("AAC", 96), "opus": ("Opus", 96)}
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 

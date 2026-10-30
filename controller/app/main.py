@@ -10,6 +10,7 @@ import mimetypes
 import os
 import re
 import secrets
+import shutil
 import time
 from contextlib import asynccontextmanager
 from datetime import date
@@ -30,7 +31,7 @@ from . import access as accmod
 from . import media, transfer
 from .art import count_station_click, find_station_logo, image_file, save_image, search_stations
 from .access import ADMIN, ANON, Access, merge_user_config, visible_config
-from .config import SECRET_MASK, Config, ConfigStore, Podcast, Station, dump
+from .config import CONFIG_PATH, SECRET_MASK, STREAM_FORMATS, STREAM_INFO, Config, ConfigStore, Podcast, Station, dump
 from .engine import SAVED_DIR, Engine, short_error
 from .liq import Liquidsoap
 from .navidrome import Navidrome
@@ -952,6 +953,81 @@ async def ram():
     shows = [{"title": owners.get(p, {}).get("title") or Path(p).stem, "channel": owners.get(p, {}).get("channel") or "",
               "since": owners.get(p, {}).get("ts"), "size": size} for p, size in files]
     return {**usage, "shows": sorted(shows, key=lambda s: -s["size"])}
+
+
+HEALTH_EVERY = 60  # seconds the Invidious check is reused
+DISK_LOW = 2 << 30  # free bytes on the data disk below which it shows as a problem
+_invidious_check: tuple[float, dict] = (0.0, {})
+
+
+async def invidious_health() -> dict:
+    """Whether Invidious answers, and how fast: without it video cut-ins quietly stop.
+    Checked at most once a minute, however often the apps ask."""
+    global _invidious_check
+    at, last = _invidious_check
+    if last and time.monotonic() - at < HEALTH_EVERY:
+        return last
+    url = store.config.settings.invidious_url.rstrip("/") + "/api/v1/stats"
+    started = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            (await c.get(url)).raise_for_status()
+        last = {"ok": True, "seconds": round(time.monotonic() - started, 2)}
+    except Exception as e:
+        last = {"ok": False, "error": short_error(e)}
+    _invidious_check = (time.monotonic(), last)
+    return last
+
+
+@app.get("/api/health")
+async def health():
+    """For the admin's overview in the apps: is the stream on air, does Invidious answer,
+    how much room is left on the data disk, and how many listen to each channel."""
+    cfg = store.config
+    states = [engine.state(c.id) for c in cfg.channels]
+    on_air = sum(1 for cs in states if cs.liq)
+    disk = shutil.disk_usage(CONFIG_PATH.parent)
+    icecast = any(cs.listeners is not None for cs in states)
+    return {
+        "stream": {"ok": engine.liq_up and icecast and on_air > 0, "on_air": on_air, "channels": len(cfg.channels),
+                   "icecast": icecast},
+        "invidious": await invidious_health(),
+        "disk": {"ok": disk.free >= DISK_LOW, "free": disk.free, "size": disk.total},
+        "listeners": [{"channel": c.id, "name": c.name, "listeners": cs.listeners}
+                      for c, cs in zip(cfg.channels, states)],
+    }
+
+
+def streams_list() -> dict:
+    on = set(store.config.settings.streams)
+    return {"streams": [{"id": f, "format": STREAM_INFO[f][0], "kbps": STREAM_INFO[f][1],
+                         # 1 kbit/s for an hour is 0.45 MB.
+                         "mb_per_hour": round(STREAM_INFO[f][1] * 0.45), "on": f in on}
+                        for f in STREAM_FORMATS]}
+
+
+@app.get("/api/streams")
+async def get_streams():
+    """The streams the radio can make for every channel, with their bitrate, data per
+    hour of listening and whether they are on (Settings › Stream formats on the web)."""
+    return streams_list()
+
+
+class StreamsEdit(BaseModel):
+    on: list[str]
+
+
+@app.put("/api/streams")
+async def put_streams(body: StreamsEdit):
+    """Switch streams on or off; at least one stays on."""
+    if unknown := set(body.on) - set(STREAM_FORMATS):
+        raise HTTPException(422, f"unknown stream: {', '.join(sorted(unknown))}")
+    if not body.on:
+        raise HTTPException(422, "keep at least one stream on")
+    cfg = store.config
+    cfg = cfg.model_copy(update={"settings": cfg.settings.model_copy(update={"streams": body.on})})
+    await run_in_threadpool(store.save, cfg)
+    return streams_list()
 
 
 @app.get("/api/now/audio")
