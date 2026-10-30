@@ -58,6 +58,8 @@ ICECAST_STATUS_URL = os.environ.get("ICECAST_STATUS_URL", "http://icecast:8000/s
 CHANNELS_FILE = Path(os.environ.get("CHANNELS_FILE", "/data/channels.json"))
 SAVED_DIR = Path(os.environ.get("SAVED_DIR", "/data/saved"))  # recordings saved for later, on disk
 TICK = 1.0
+# files an iPhone plays straight away; a cut-in in another format (WebM/Opus) is fetched again
+PHONE_PLAYABLE = (".m4a", ".mp4", ".aac", ".mp3")
 WAIT_NOTE = {"live": "live now, plays once it is over", "upcoming": "live soon, plays once it is over",
              "processing": "waits until Invidious can play the recording"}
 INIT_MARK = "__init__"
@@ -896,13 +898,15 @@ class Engine:
 
     def now_audio(self, cid: str, key: str | None = None) -> dict | None:
         """Where the apps get the cut-in playing on a channel now, to scroll back in it on
-        the phone: the file itself for own media and voice messages (phones can play
-        those), else its source again (the radio's copy may be WebM/Opus, which iPhones
-        can't play). None when nothing replayable plays, or `key` is not what plays."""
+        the phone: the radio's own copy (in RAM or the cache) when phones can play it,
+        which lets them jump anywhere at once, else its source again (a video copy in
+        WebM/Opus, which iPhones can't play, comes again as AAC through Invidious).
+        None when nothing replayable plays, or `key` is not what plays."""
         it = next((i for i in self.items if i.channel == cid and i.state == "playing"), None)
         if it is None or (key and it.key != key):
             return None
-        if it.path and (it.keep_file or it.kind in ("voice", "inbox")) and Path(it.path).is_file():
+        if it.path and Path(it.path).is_file() and (
+                it.keep_file or it.kind in ("voice", "inbox") or Path(it.path).suffix.lower() in PHONE_PLAYABLE):
             return {"path": it.path}
         return {"media": it.media} if it.media and it.kind != "inbox" else None
 

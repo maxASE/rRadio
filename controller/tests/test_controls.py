@@ -299,7 +299,7 @@ def test_week_lists_programs_and_spots(admin, app_main):
     assert mon["programs"][0]["ran"]["from"] == 22 * 60 + 5 and mon["programs"][0]["ran"]["to"] == 22 * 60 + 55
 
 
-def test_the_clip_on_air_can_be_listened_back(admin, app_main, monkeypatch):
+def test_the_clip_on_air_can_be_listened_back(admin, app_main, monkeypatch, tmp_path):
     from app.sources import Item
 
     eng = app_main.engine
@@ -318,6 +318,12 @@ def test_the_clip_on_air_can_be_listened_back(admin, app_main, monkeypatch):
 
         monkeypatch.setattr(app_main, "replay_response", fake)
         assert admin.get(f"/api/now/audio?channel={cid}&key={it.key}").json() == {"media": "dQw4w9WgXcQ"}
+        # the radio's own copy, when the phone can play it, so it can jump anywhere at once
+        for name, want in (("clip.m4a", True), ("clip.webm", False)):
+            f = tmp_path / name
+            f.write_bytes(b"audio")
+            it.path = str(f)
+            assert eng.now_audio(cid) == ({"path": str(f)} if want else {"media": "dQw4w9WgXcQ"})
     finally:
         eng.items.remove(it)
     assert admin.get(f"/api/now/audio?channel={cid}").status_code == 410
