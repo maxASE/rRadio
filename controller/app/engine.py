@@ -1388,6 +1388,20 @@ class Engine:
                 # The apps can scroll back in it while it plays (GET /api/now/audio).
                 "listen_back": self.now_audio(ch.id) is not None,
             }
+        if st["mode"] == "cutin" and st.get("cutin_current", -1) != -1:
+            # A clip the controller lost track of (it restarted while the clip played):
+            # still a cut-in, named by what Liquidsoap knows, but its file is gone.
+            return {
+                "mode": "cutin",
+                "kind": "",
+                "source": st.get("artist", ""),
+                "title": st.get("title", ""),
+                "elapsed": st["cutin_elapsed"],
+                "duration": st["cutin_elapsed"] + st["cutin_remaining"],
+                "art": None,
+                "key": f"liq:{st['cutin_current']}",
+                "listen_back": False,
+            }
         base = cs.on_program.program if cs.on_program else ch.station()
         mode = "program" if cs.on_program else "station"
         name = base.name if base else ""
