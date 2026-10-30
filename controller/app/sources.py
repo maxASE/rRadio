@@ -445,6 +445,110 @@ async def _download(url: str, stem: Path, progress: Callable[[float | None], Non
     return path
 
 
+FIRST_PIECE = 1 << 20  # small, so playback starts quickly
+PIECES_AHEAD = 4  # pieces fetched at once when passing a clip on to a phone
+PIECE_TRIES = 3
+
+
+@dataclass
+class Relay:
+    """An upstream answer passed on to a listener: status, headers and the bytes."""
+    status: int
+    headers: dict[str, str]
+    body: object  # async iterator of bytes
+
+
+def parse_range(value: str | None) -> tuple[int, int | None] | None:
+    """`bytes=a-b` or `bytes=a-` as (a, b or None); anything else (suffix or several
+    ranges, which players don't send) as None, served as the whole file."""
+    m = re.fullmatch(r"\s*bytes\s*=\s*(\d+)-(\d*)\s*", value or "")
+    if not m or (m[2] and int(m[2]) < int(m[1])):
+        return None
+    return int(m[1]), int(m[2]) if m[2] else None
+
+
+async def relay_in_pieces(url: str, wanted: tuple[int, int | None] | None) -> Relay | None:
+    """Fetches `url` (the bytes in `wanted`, or all of it) for passing on to a listener.
+    The video site sends a long Range at about playback speed, so a 40-minute clip downloaded
+    in one request takes many minutes; small ranges come fast. So the bytes are fetched
+    in CHUNK pieces, PIECES_AHEAD at a time, and passed on in order, as one answer.
+    None when the URL doesn't answer with 200 or 206."""
+    start, end = wanted or (0, None)
+    c = client(timeout=60)
+    try:
+        first_end = start + FIRST_PIECE - 1 if end is None else min(end, start + FIRST_PIECE - 1)
+        r = await c.send(c.build_request("GET", url, headers={"Range": f"bytes={start}-{first_end}",
+                                                               "Accept-Encoding": "identity"}), stream=True)
+    except BaseException:
+        await c.aclose()
+        raise
+    if r.status_code not in (200, 206):
+        log.info("listen again: %s answered %s", url, r.status_code)
+        await r.aclose()
+        await c.aclose()
+        return None
+    total_text = r.headers.get("content-range", "").rpartition("/")[2]
+    headers = {"content-type": r.headers.get("content-type", "application/octet-stream")}
+    if r.status_code == 200 or not total_text.isdigit():
+        # No ranges (or no length) here: the whole answer passed on as it comes.
+        headers.update({k: v for k, v in r.headers.items() if k.lower() in ("content-length", "content-range")})
+
+        async def whole():
+            try:
+                async for chunk in r.aiter_raw():
+                    yield chunk
+            finally:
+                await r.aclose()
+                await c.aclose()
+
+        return Relay(r.status_code, headers, whole())
+
+    total = int(total_text)
+    end = total - 1 if end is None else min(end, total - 1)
+    url = str(r.url)  # the redirect target, for the other pieces
+    try:
+        first = await r.aread()
+    except BaseException:
+        await c.aclose()
+        raise
+    finally:
+        await r.aclose()
+
+    async def piece(a: int, b: int) -> bytes:
+        for attempt in range(PIECE_TRIES):
+            try:
+                got = await c.get(url, headers={"Range": f"bytes={a}-{b}", "Accept-Encoding": "identity"})
+                if got.status_code == 206 and len(got.content) == b - a + 1:
+                    return got.content
+                problem = f"answered {got.status_code} with {len(got.content)} bytes"
+            except httpx.HTTPError as e:
+                problem = str(e) or type(e).__name__
+            log.info("listen again: bytes %d-%d of %s %s (try %d)", a, b, url, problem, attempt + 1)
+        raise RuntimeError(f"bytes {a}-{b} could not be fetched")
+
+    async def body():
+        pending: list[asyncio.Task] = []
+        try:
+            yield first
+            nxt = start + len(first)
+            while pending or nxt <= end:
+                while nxt <= end and len(pending) < PIECES_AHEAD:
+                    stop = min(nxt + CHUNK - 1, end)
+                    pending.append(asyncio.create_task(piece(nxt, stop)))
+                    nxt = stop + 1
+                yield await pending.pop(0)
+        finally:
+            for t in pending:
+                t.cancel()
+            await c.aclose()
+
+    headers.update({"content-length": str(end - start + 1), "accept-ranges": "bytes"})
+    if wanted is None:
+        return Relay(200, headers, body())
+    headers["content-range"] = f"bytes {start}-{end}/{total}"
+    return Relay(206, headers, body())
+
+
 async def _ytdlp(video_id: str, stem: Path) -> Path:
     if not shutil.which("yt-dlp"):
         raise RuntimeError("yt-dlp not installed")
