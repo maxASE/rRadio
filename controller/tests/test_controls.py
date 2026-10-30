@@ -565,3 +565,19 @@ def test_the_admin_sees_what_fills_the_ram(admin, app_main, ram_dir):
         assert mine == {"title": "Morning show", "channel": "main", "since": 1000.0, "size": 3000}
     finally:
         show.unlink()
+
+
+def test_a_clip_the_controller_lost_track_of_still_shows_as_a_cut_in(app_main):
+    # The controller restarted while Liquidsoap played a clip: it is not a station title.
+    eng = app_main.engine
+    ch = app_main.store.config.channels[0]
+    cs = eng.state(ch.id)
+    old = cs.liq
+    cs.liq = {"mode": "cutin", "cutin_current": 7, "cutin_queue": [], "cutin_elapsed": 60.0, "cutin_remaining": 240.0,
+              "base_up": True, "title": "Fredagsmys", "artist": "Riks"}
+    try:
+        now = eng.now_playing(ch)
+        assert now["mode"] == "cutin" and now["source"] == "Riks" and now["title"] == "Fredagsmys"
+        assert now["duration"] == 300.0 and now["listen_back"] is False
+    finally:
+        cs.liq = old
