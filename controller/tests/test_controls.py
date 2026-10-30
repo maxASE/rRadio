@@ -10,6 +10,17 @@ def test_status_shape(admin):
         assert key in s
 
 
+def test_each_channel_lists_its_streams(admin, app_main):
+    old = list(app_main.store.config.settings.streams)
+    try:
+        admin.put("/api/streams", json={"on": ["mp3", "aac48"]})
+        c = admin.get("/api/status").json()["channels"][0]
+        assert set(c["streams"]) == {"mp3", "aac48"}
+        assert c["streams"]["aac48"].endswith(".aac48") and c["stream"] == c["streams"]["mp3"]
+    finally:
+        admin.put("/api/streams", json={"on": old})
+
+
 def test_events_sends_status_first(admin, app_main, monkeypatch):
     # The test client can't signal a disconnect, so let the feed end by itself.
     monkeypatch.setattr(app_main, "EVENTS_PING", 0.1)

@@ -385,6 +385,7 @@ def build_status(request: Request, channel: str | None, a: Access, shared: bool 
     for c in data.get("channels", []) + ([data["channel"]] if data.get("channel") else []):
         urls = stream_urls(request, c["id"])
         c["stream"] = urls.get("mp3") or next(iter(urls.values()), "")
+        c["streams"] = urls  # every stream that is on, so a phone can pick its quality
         ch = cfg.channel(c["id"])
         if ch:
             c.update(owner=ch.owner, owner_name=names.get(ch.owner, ""), public=ch.public, can_edit=a.can_control(ch))
