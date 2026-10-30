@@ -128,3 +128,18 @@ def test_streams_count_listeners_per_format(admin, app_main, monkeypatch):
     monkeypatch.setattr(app_main.engine, "stream_listeners", {"mp3": 3})
     s = {x["id"]: x["listeners"] for x in admin.get("/api/streams").json()["streams"]}
     assert s == {"mp3": 3, "aac": 0, "opus": 0}
+
+
+def test_phone_playing_a_clip_again_counts_as_listening(admin, anon, app_main):
+    d = pair(admin, anon, role="member")
+    auth = {"Authorization": f"Bearer {d['token']}"}
+    cid = d["channels"][0]["id"]
+    assert anon.post("/api/listening", json={"channel": cid}, headers=auth).status_code == 200
+    phones = {x["channel"]: x["phones"] for x in admin.get("/api/health").json()["listeners"]}
+    assert phones[cid] == 1
+    assert admin.get("/api/streams").json()["listening_again"] == 1
+    # Saying it again doesn't count the phone twice; stopping takes it off at once.
+    anon.post("/api/listening", json={"channel": cid}, headers=auth)
+    assert admin.get("/api/streams").json()["listening_again"] == 1
+    anon.post("/api/listening", json={"channel": cid, "playing": False}, headers=auth)
+    assert admin.get("/api/streams").json()["listening_again"] == 0
