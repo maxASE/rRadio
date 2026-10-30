@@ -277,6 +277,8 @@ class Engine:
         self.channels: dict[str, ChannelState] = {}
         self.liq_up = False
         self.liq_streams: list[str] = []
+        # Listeners per stream format (mp3, aac, …) over all channels; None while Icecast is unreachable.
+        self.stream_listeners: dict[str, int] | None = None
         self.source_state: dict[str, dict] = {}
         self.inbox = Inbox()
         self._restart_at = 0.0
@@ -1362,9 +1364,15 @@ class Engine:
                         self.state(ch.id).listeners = sum(
                             int(s.get("listeners", 0)) for s in srcs if f"/{ch.mount}." in s.get("listenurl", "")
                         )
+                    per_format: dict[str, int] = {}
+                    for s in srcs:
+                        fmt = s.get("listenurl", "").rsplit(".", 1)[-1]
+                        per_format[fmt] = per_format.get(fmt, 0) + int(s.get("listeners", 0))
+                    self.stream_listeners = per_format
                 except Exception:
                     for cs in self.channels.values():
                         cs.listeners = None
+                    self.stream_listeners = None
                 await asyncio.sleep(15)
 
     # --- status for the UI -----------------------------------------------------
