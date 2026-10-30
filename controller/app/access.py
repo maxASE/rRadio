@@ -15,6 +15,7 @@ from __future__ import annotations
 from contextvars import ContextVar
 from dataclasses import dataclass
 
+from . import media
 from .config import Channel, Config
 from .devices import Device
 from .users import User
@@ -25,6 +26,7 @@ class Access:
     admin: bool = True
     user: User | None = None
     device: Device | None = None
+    anonymous: bool = False  # not logged in, on a page that needs no login
 
     @property
     def uid(self) -> str:
@@ -37,6 +39,8 @@ class Access:
         """Change it: stations, skip, cut-ins, wind down; for users also its program."""
         if self.admin:
             return True
+        if self.anonymous:
+            return False
         if self.user is None:  # a member device paired by the admin
             return self._device_ok(ch)
         return ch.owner == self.user.id and self._device_ok(ch)
@@ -52,6 +56,9 @@ class Access:
 
 
 ADMIN = Access()
+# Pages that need no login (playlists, the now-playing picture, pairing) run as this
+# when a password is set, so they get no rights unless they ask for them explicitly.
+ANON = Access(admin=False, anonymous=True)
 
 # Who is behind the current request; the admin when no password is set.
 current: ContextVar[Access] = ContextVar("rradio_access", default=ADMIN)
@@ -101,6 +108,8 @@ def merge_user_config(cur: Config, body: dict, user: User) -> dict:
         for spot in ch.get("spots") or []:
             files = spot.get("files") if isinstance(spot, dict) else None
             for f in files or []:
-                if not str(f).lstrip("/").startswith(user.folder):
-                    raise ValueError(f"spots can only play your own files (in {user.folder}), not {f!r}")
+                try:
+                    media.resolve_in(str(f), user.folder)
+                except ValueError:
+                    raise ValueError(f"spots can only play your own files (in {user.folder}), not {f!r}") from None
     return data

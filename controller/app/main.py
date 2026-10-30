@@ -29,7 +29,7 @@ from . import API_VERSION, __version__
 from . import access as accmod
 from . import media, transfer
 from .art import count_station_click, find_station_logo, image_file, save_image, search_stations
-from .access import ADMIN, Access, merge_user_config, visible_config
+from .access import ADMIN, ANON, Access, merge_user_config, visible_config
 from .config import SECRET_MASK, Config, ConfigStore, Podcast, Station, dump
 from .engine import SAVED_DIR, Engine, short_error
 from .liq import Liquidsoap
@@ -127,7 +127,9 @@ async def basic_auth(request: Request, call_next):
         if not a.admin and path.startswith("/api/") and not _allowed(USER_ROUTES, request):
             return JSONResponse({"detail": "only the admin can do that"}, status_code=403)
     if a is None:
-        return await call_next(request)
+        if not UI_PASSWORD:
+            return await call_next(request)  # no password: everyone is the admin
+        a = ANON  # a page that needs no login
     token = accmod.current.set(a)
     try:
         return await call_next(request)
@@ -282,7 +284,10 @@ async def healthz():
 
 
 def _playlist(request: Request, fmt: str, channel: str | None) -> tuple[str, str, str]:
-    ch = listen_channel(channel)
+    # Playlist files stay open for players (the streams themselves are open on Icecast).
+    ch = store.config.channel(channel) if acc().anonymous else listen_channel(channel)
+    if ch is None:
+        raise HTTPException(404, "unknown channel")
     urls = stream_urls(request, ch.id)
     return urls.get(fmt) or next(iter(urls.values())), ch.name, ch.mount
 
@@ -378,7 +383,10 @@ def build_status(request: Request, channel: str | None, a: Access) -> dict:
 @app.get("/api/widget")
 async def widget(channel: str | None = None):
     """Read-only summary for dashboards (e.g. Homepage's customapi widget)."""
-    return engine.widget(listen_channel(channel).id if not acc().admin else channel)
+    a = acc()
+    if a.admin or a.anonymous:  # anonymous only with WIDGET_PUBLIC, which opens it on purpose
+        return engine.widget(channel)
+    return engine.widget(listen_channel(channel).id)
 
 
 @app.get("/api/config")
@@ -795,8 +803,11 @@ def own_media(path: str) -> str:
     """A path in the media library the caller may use: a user only their own folder."""
     a = acc()
     path = path.lstrip("/")
-    if not a.admin and not path.startswith(a.user.folder):
-        raise HTTPException(404, "no such file")
+    if not a.admin:
+        try:
+            media.resolve_in(path, a.user.folder)
+        except ValueError:
+            raise HTTPException(404, "no such file")
     return path
 
 
@@ -820,6 +831,10 @@ async def upload_media(file: UploadFile = File(...), folder: str = Form("")):
         folder = folder.strip().strip("/")
         home = a.user.folder.rstrip("/")
         folder = folder if folder == home or folder.startswith(home + "/") else f"{home}/{folder}".rstrip("/")
+        try:
+            media.resolve_in(folder, home)
+        except ValueError:
+            raise HTTPException(400, "you can only upload into your own folder")
     try:
         rel = await run_in_threadpool(media.save_upload, file.file, file.filename or "upload.mp3", folder)
     except ValueError as e:
