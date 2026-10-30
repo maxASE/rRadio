@@ -73,7 +73,7 @@ app = FastAPI(title="rRadio", version=__version__, lifespan=lifespan, docs_url="
 # What a "member" device may call; everything else needs an admin device or the UI password.
 MEMBER_ROUTES = {
     "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio|now/audio|navidrome/playlists|week|saved|search|week/numbers)"),
-    "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire|history/\d+/(play-next|save)|quiet|queue/order)"),
+    "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire|history/\d+/(play-next|save)|quiet|queue/order|listening)"),
     "DELETE": re.compile(r"/api/(queue/.+|history/\d+/(replay|save))"),
 }
 
@@ -933,6 +933,7 @@ async def history_audio(entry_id: int, request: Request):
     channel, info = found
     if channel:
         listen_channel(channel)
+        heard_again(channel)
     return await replay_response(info, request)
 
 
@@ -988,12 +989,14 @@ async def health():
     on_air = sum(1 for cs in states if cs.liq)
     disk = shutil.disk_usage(CONFIG_PATH.parent)
     icecast = any(cs.listeners is not None for cs in states)
+    again = listening_again()
     return {
         "stream": {"ok": engine.liq_up and icecast and on_air > 0, "on_air": on_air, "channels": len(cfg.channels),
                    "icecast": icecast},
         "invidious": await invidious_health(),
         "disk": {"ok": disk.free >= DISK_LOW, "free": disk.free, "size": disk.total},
-        "listeners": [{"channel": c.id, "name": c.name, "listeners": cs.listeners}
+        # `phones`: apps playing a clip of the channel again, not on the stream.
+        "listeners": [{"channel": c.id, "name": c.name, "listeners": cs.listeners, "phones": again.get(c.id, 0)}
                       for c, cs in zip(cfg.channels, states)],
     }
 
@@ -1005,14 +1008,17 @@ def streams_list() -> dict:
                          # 1 kbit/s for an hour is 0.45 MB.
                          "mb_per_hour": round(STREAM_INFO[f][1] * 0.45), "on": f in on,
                          "listeners": None if heard is None else heard.get(f, 0)}
-                        for f in STREAM_FORMATS]}
+                        for f in STREAM_FORMATS],
+            # Phones playing a clip again: they download it, not a stream.
+            "listening_again": sum(listening_again().values())}
 
 
 @app.get("/api/streams")
 async def get_streams():
     """The streams the radio can make for every channel, with their bitrate, data per
     hour of listening, whether they are on (Settings › Stream formats on the web) and
-    how many listen to each, over all channels (null while Icecast can't be asked)."""
+    how many listen to each, over all channels (null while Icecast can't be asked), and
+    how many phones play a clip again instead."""
     return streams_list()
 
 
@@ -1039,10 +1045,52 @@ async def now_audio(request: Request, channel: str | None = None, key: str | Non
     while the radio plays it. With `key` (now.key in the status) it answers 410 once
     that clip is over, rather than serving the next one."""
     ch = listen_channel(channel)
+    heard_again(ch.id)
     info = engine.now_audio(ch.id, key)
     if not info:
         raise HTTPException(410, "that clip is over")
     return await replay_response(info, request)
+
+
+# Phones playing a clip again (not the stream): device id -> (channel, until when, monotonic).
+# Icecast doesn't see them, so they say so while playing (POST /api/listening).
+LISTENING_AGAIN_FOR = 75  # seconds a phone counts after it last said so; the apps say it every 30 s
+_listening_again: dict[str, tuple[str, float]] = {}
+
+
+def heard_again(cid: str, playing: bool = True) -> None:
+    dev = acc().device
+    if dev is None:  # the web page; only paired apps say when they stop
+        return
+    if playing:
+        _listening_again[dev.id] = (cid, time.monotonic() + LISTENING_AGAIN_FOR)
+    else:
+        _listening_again.pop(dev.id, None)
+
+
+def listening_again() -> dict[str, int]:
+    """Phones playing a clip again right now, per channel."""
+    now = time.monotonic()
+    for dev, (_, until) in list(_listening_again.items()):
+        if until < now:
+            del _listening_again[dev]
+    counts: dict[str, int] = {}
+    for cid, _ in _listening_again.values():
+        counts[cid] = counts.get(cid, 0) + 1
+    return counts
+
+
+class Listening(BaseModel):
+    channel: str | None = None
+    playing: bool = True
+
+
+@app.post("/api/listening")
+async def listening(body: Listening):
+    """An app playing a clip again on the phone says so every half minute, and when it
+    stops: Listening now counts it, though it doesn't listen to the stream."""
+    heard_again(listen_channel(body.channel).id, body.playing)
+    return {"ok": True}
 
 
 async def replay_response(info: dict, request: Request):
