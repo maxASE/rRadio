@@ -110,7 +110,8 @@ lists everything in one place and shows how many channels use each source. A vid
 
 Adding, renaming or removing a channel restarts the audio engine, so every
 stream drops for a few seconds. Icecast needs one mount per channel and
-format; `ICECAST_MAX_SOURCES` (default 20) is the limit.
+format; `ICECAST_MAX_SOURCES` (default 100) is the limit. If it is too low,
+the formats that connect last (AAC 48, AAC 192) are turned away and only MP3 plays.
 
 ## Finding radio stations
 
