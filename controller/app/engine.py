@@ -279,6 +279,8 @@ class Engine:
         self.liq_streams: list[str] = []
         # Listeners per stream format (mp3, aac, …) over all channels; None while Icecast is unreachable.
         self.stream_listeners: dict[str, int] | None = None
+        # Listeners per Icecast mount ("radio.aac48"), for the stream tiles on the web; None like above.
+        self.mount_listeners: dict[str, int] | None = None
         # Streams that are on but that Icecast hasn't had for a while ("radio.aac48"), most
         # often because ICECAST_MAX_SOURCES is too low. Admins get a warning.
         self.missing_streams: list[str] = []
@@ -958,7 +960,7 @@ class Engine:
             chans[cid] = (liq, prog, cs.listeners, cs.music_error, cs.spots, cs.shows, cs.ended)
         items = [(i.uid, i.state, i.channel, round((i.progress or 0) * 20)) for i in self.items]
         sig = json.dumps([id(self.config), self.liq_up, chans, items, self.source_state, self._waiting_rev,
-                          self.missing_streams], sort_keys=True, default=str)
+                          self.missing_streams, self.mount_listeners], sort_keys=True, default=str)
         if sig != self._signature:
             self._signature = sig
             self.version += 1
@@ -1374,11 +1376,13 @@ class Engine:
                         fmt = s.get("listenurl", "").rsplit(".", 1)[-1]
                         per_format[fmt] = per_format.get(fmt, 0) + int(s.get("listeners", 0))
                     self.stream_listeners = per_format
+                    self.mount_listeners = {s.get("listenurl", "").rsplit("/", 1)[-1]: int(s.get("listeners", 0)) for s in srcs}
                     self._check_mounts(srcs)
                 except Exception:
                     for cs in self.channels.values():
                         cs.listeners = None
                     self.stream_listeners = None
+                    self.mount_listeners = None
                 await asyncio.sleep(15)
 
     MOUNT_GRACE = 90  # seconds a stream may be missing (engine starting up) before admins hear of it
@@ -1638,6 +1642,9 @@ class Engine:
             "ram": ram_usage(),
             # Streams that are on but missing on Icecast: the web UI tells admins why.
             "missing_streams": self.missing_streams,
+            # Listeners per stream format of this channel (null while Icecast can't be asked).
+            "stream_listeners": None if self.mount_listeners is None
+            else {f: self.mount_listeners.get(f"{ch.mount}.{f}", 0) for f in cfg.settings.streams},
             "engine_up": self.liq_up and cs.liq is not None,
             "station": station.model_dump() if station else None,
             # The channel's stations, for a picker in the app.
