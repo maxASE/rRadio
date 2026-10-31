@@ -9,7 +9,7 @@ from app import media
 from test_users import make_user
 
 # Paths that stay open without a login (players, dashboards, the log-in page, pairing).
-OPEN = ("/listen.", "/healthz", "/static", "/login", "/api/login", "/api/art/now/", "/api/pair")
+OPEN = ("/listen.", "/healthz", "/static", "/login", "/api/login", "/api/art/now/", "/api/pair", "/api/hello")
 
 
 def upload(client, name, folder=""):

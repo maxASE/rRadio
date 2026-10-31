@@ -163,3 +163,17 @@ def test_streams_missing_on_icecast_are_reported_after_a_while(admin, app_main, 
     assert admin.get("/api/health").json()["missing_streams"] == [want[-1]]
     eng._check_mounts(srcs + [{"listenurl": f"http://icecast:8000/{want[-1]}"}], now=2000.0)
     assert eng.missing_streams == []
+
+
+def test_hello_proves_the_radio_without_the_key(admin, anon):
+    import hashlib
+    import hmac
+
+    d = pair(admin, anon, role="member")
+    nonce = "0123456789abcdef0123"
+    r = anon.get("/api/hello", params={"device": d["device"]["id"], "nonce": nonce})
+    assert r.status_code == 200
+    key = hashlib.sha256(d["token"].encode()).hexdigest().encode()
+    assert r.json() == {"rradio": True, "proof": hmac.new(key, nonce.encode(), hashlib.sha256).hexdigest()}
+    assert anon.get("/api/hello", params={"device": "nope", "nonce": nonce}).status_code == 404
+    assert anon.get("/api/hello", params={"device": d["device"]["id"], "nonce": "short"}).status_code == 400
