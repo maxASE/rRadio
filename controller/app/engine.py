@@ -279,6 +279,10 @@ class Engine:
         self.liq_streams: list[str] = []
         # Listeners per stream format (mp3, aac, …) over all channels; None while Icecast is unreachable.
         self.stream_listeners: dict[str, int] | None = None
+        # Streams that are on but that Icecast hasn't had for a while ("radio.aac48"), most
+        # often because ICECAST_MAX_SOURCES is too low. Admins get a warning.
+        self.missing_streams: list[str] = []
+        self._missing_since: dict[str, float] = {}
         self.source_state: dict[str, dict] = {}
         self.inbox = Inbox()
         self._restart_at = 0.0
@@ -953,7 +957,8 @@ class Engine:
             prog = (cs.on_program.program.name, cs.on_program.end) if cs.on_program else None
             chans[cid] = (liq, prog, cs.listeners, cs.music_error, cs.spots, cs.shows, cs.ended)
         items = [(i.uid, i.state, i.channel, round((i.progress or 0) * 20)) for i in self.items]
-        sig = json.dumps([id(self.config), self.liq_up, chans, items, self.source_state, self._waiting_rev], sort_keys=True, default=str)
+        sig = json.dumps([id(self.config), self.liq_up, chans, items, self.source_state, self._waiting_rev,
+                          self.missing_streams], sort_keys=True, default=str)
         if sig != self._signature:
             self._signature = sig
             self.version += 1
@@ -1369,11 +1374,29 @@ class Engine:
                         fmt = s.get("listenurl", "").rsplit(".", 1)[-1]
                         per_format[fmt] = per_format.get(fmt, 0) + int(s.get("listeners", 0))
                     self.stream_listeners = per_format
+                    self._check_mounts(srcs)
                 except Exception:
                     for cs in self.channels.values():
                         cs.listeners = None
                     self.stream_listeners = None
                 await asyncio.sleep(15)
+
+    MOUNT_GRACE = 90  # seconds a stream may be missing (engine starting up) before admins hear of it
+
+    def _check_mounts(self, srcs: list[dict], now: float | None = None) -> None:
+        """Which streams that are on Icecast doesn't have. Liquidsoap connects them one by
+        one, and Icecast turns away every one past ICECAST_MAX_SOURCES, so with many
+        channels the formats that come last (AAC 48, AAC 192) simply aren't there."""
+        if not self.liq_up:
+            self._missing_since.clear()
+            self.missing_streams = []
+            return
+        have = {s.get("listenurl", "").rsplit("/", 1)[-1] for s in srcs}
+        want = {f"{ch.mount}.{f}" for ch in self.config.channels for f in self.config.settings.streams}
+        now = time.monotonic() if now is None else now
+        gone = want - have
+        self._missing_since = {m: self._missing_since.get(m, now) for m in gone}
+        self.missing_streams = sorted(m for m, t in self._missing_since.items() if now - t >= self.MOUNT_GRACE)
 
     # --- status for the UI -----------------------------------------------------
 
@@ -1613,6 +1636,8 @@ class Engine:
             "now": now[ch.id],
             # The RAM disk filling up: the web UI warns admins to raise RAM_CACHE_SIZE.
             "ram": ram_usage(),
+            # Streams that are on but missing on Icecast: the web UI tells admins why.
+            "missing_streams": self.missing_streams,
             "engine_up": self.liq_up and cs.liq is not None,
             "station": station.model_dump() if station else None,
             # The channel's stations, for a picker in the app.

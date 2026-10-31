@@ -143,3 +143,23 @@ def test_phone_playing_a_clip_again_counts_as_listening(admin, anon, app_main):
     assert admin.get("/api/streams").json()["listening_again"] == 1
     anon.post("/api/listening", json={"channel": cid, "playing": False}, headers=auth)
     assert admin.get("/api/streams").json()["listening_again"] == 0
+
+
+def test_streams_missing_on_icecast_are_reported_after_a_while(admin, app_main, monkeypatch):
+    eng = app_main.engine
+    monkeypatch.setattr(eng, "liq_up", True)
+    monkeypatch.setattr(eng, "_missing_since", {})
+    monkeypatch.setattr(eng, "missing_streams", [])
+    cfg = app_main.store.config
+    mounts = [c.mount for c in cfg.channels]
+    # Icecast has every stream that is on except the first channel's last format.
+    want = [f"{m}.{f}" for m in mounts for f in cfg.settings.streams]
+    srcs = [{"listenurl": f"http://icecast:8000/{w}"} for w in want[:-1]]
+    eng._check_mounts(srcs, now=1000.0)
+    assert eng.missing_streams == []  # just started: give Liquidsoap time to connect
+    eng._check_mounts(srcs, now=1000.0 + eng.MOUNT_GRACE)
+    assert eng.missing_streams == [want[-1]]
+    assert admin.get("/api/streams").json()["missing"] == [want[-1]]
+    assert admin.get("/api/health").json()["missing_streams"] == [want[-1]]
+    eng._check_mounts(srcs + [{"listenurl": f"http://icecast:8000/{want[-1]}"}], now=2000.0)
+    assert eng.missing_streams == []

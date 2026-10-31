@@ -996,6 +996,8 @@ async def health():
                    "icecast": icecast},
         "invidious": await invidious_health(),
         "disk": {"ok": disk.free >= DISK_LOW, "free": disk.free, "size": disk.total},
+        # Streams that are on but Icecast doesn't have (ICECAST_MAX_SOURCES too low, say).
+        "missing_streams": engine.missing_streams,
         # `phones`: apps playing a clip of the channel again, not on the stream.
         "listeners": [{"channel": c.id, "name": c.name, "listeners": cs.listeners, "phones": again.get(c.id, 0)}
                       for c, cs in zip(cfg.channels, states)],
@@ -1011,7 +1013,9 @@ def streams_list() -> dict:
                          "listeners": None if heard is None else heard.get(f, 0)}
                         for f in STREAM_FORMATS],
             # Phones playing a clip again: they download it, not a stream.
-            "listening_again": sum(listening_again().values())}
+            "listening_again": sum(listening_again().values()),
+            # On, but not on Icecast ("radio.aac48"): phones asking for them get nothing.
+            "missing": engine.missing_streams}
 
 
 @app.get("/api/streams")

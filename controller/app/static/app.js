@@ -393,6 +393,18 @@ function gotStatus(s) {
   setServerTime(s.time);
   renderStatus();
   showRamWarning(s.ram);
+  showMissingStreams(s.missing_streams);
+}
+
+// Streams that are on but Icecast doesn't have: phones asking for them only get "Reconnecting".
+function showMissingStreams(missing) {
+  const el = $("#streams-warn");
+  el.hidden = !(me.admin && missing && missing.length);
+  if (el.hidden) return;
+  const shown = missing.slice(0, 4).map((m) => "/" + m).join(", ") + (missing.length > 4 ? ` and ${missing.length - 4} more` : "");
+  el.textContent = `Icecast doesn't have ${shown}, so those streams don't play. Usually ICECAST_MAX_SOURCES is too low `
+    + "(it needs channels × stream formats). Raise it in .env (for example to 100) and run "
+    + "docker compose up -d icecast, then docker compose restart liquidsoap. Or turn off formats you don't need in Settings › Stream formats.";
 }
 
 // Only admins can do something about it (RAM_CACHE_SIZE in .env).
