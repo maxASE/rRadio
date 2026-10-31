@@ -4,7 +4,7 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const VIEWS = ["home", "channel", "schedule", "sources", "settings"];
+const VIEWS = ["home", "channel", "schedule", "sources", "admin", "settings"];
 let cfg = null;
 let status = null;
 let mediaLib = { files: [], folders: [] };
@@ -212,12 +212,25 @@ function route() {
   $$(".view").forEach((s) => s.classList.toggle("active", s.id === `view-${view}`));
   $$("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === (view === "channel" ? "home" : view)));
   if (view === "sources" || view === "schedule") loadMedia();
+  if (view === "admin" && !me.admin) { location.hash = "#/home"; return; }
   if (view === "settings") { loadDevices(); if (me.admin && me.login) loadUsers(); }
   else if (pairing) hidePairing();
+  if (view === "admin") loadAdmin();
   if (cfg) renderConfig();
   if (status) renderStatus();
-  window.scrollTo(0, 0);
+  const target = gotoAfterRoute && document.getElementById(gotoAfterRoute);
+  gotoAfterRoute = null;
+  if (target) target.scrollIntoView({ block: "start" });
+  else window.scrollTo(0, 0);
 }
+// Links on the Admin page that open one part of Settings.
+let gotoAfterRoute = null;
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("a[data-goto]");
+  if (!a) return;
+  gotoAfterRoute = a.dataset.goto;
+  if (location.hash === "#/settings") { e.preventDefault(); route(); }
+});
 window.addEventListener("hashchange", route);
 
 // Chips that switch the channel within a view.
@@ -254,7 +267,7 @@ function updateListenButtons() {
   for (const b of $$("[data-listen]")) {
     const cid = b.dataset.listen || channelId;
     const st = cid === listenCh ? playerState : "off";
-    if (b.classList.contains("big-play")) {
+    if (b.classList.contains("big-play") || b.classList.contains("pb-play")) {
       b.textContent = { off: "▶", connecting: "…", on: "■" }[st];
       b.setAttribute("aria-label", { off: "Listen here", connecting: "Connecting, click to stop", on: "Stop listening" }[st]);
     } else {
@@ -267,12 +280,13 @@ function updateListenButtons() {
 function setPlayerState(st) {
   playerState = st;
   updateListenButtons();
+  showLostSignal();
 }
 
 function startListening(cid = listenCh) {
   clearTimeout(retryTimer);
   const src = streamOf(cid);
-  if (!src) return toast("No stream is switched on. Turn on a format under Settings.", true);
+  if (!src) return toast("No stream is switched on. Switch one on under Admin › Streams.", true);
   listenCh = cid;
   listenSrc = src;
   setPlayerState("connecting");
@@ -375,6 +389,8 @@ function renderStatus() {
   if (view === "channel" && s.channel) renderChannelStatus();
   if (view === "schedule" && s.channel) { renderTimeline(true); renderSpotMeta(); renderProgramMeta(); }
   if (view === "sources") renderSourcesTable(true);
+  if (view === "admin") renderAdminStatus();
+  renderPlayerBar();
   updateListenButtons();
 }
 
@@ -392,29 +408,30 @@ function gotStatus(s) {
   advancedAt = Date.now();
   setServerTime(s.time);
   renderStatus();
-  showRamWarning(s.ram);
-  showMissingStreams(s.missing_streams);
+  showAdminAlerts(s);
 }
 
-// Streams that are on but Icecast doesn't have: phones asking for them only get "Reconnecting".
-function showMissingStreams(missing) {
-  const el = $("#streams-warn");
-  el.hidden = !(me.admin && missing && missing.length);
-  if (el.hidden) return;
-  const shown = missing.slice(0, 4).map((m) => "/" + m).join(", ") + (missing.length > 4 ? ` and ${missing.length - 4} more` : "");
-  el.textContent = `Icecast doesn't have ${shown}, so those streams don't play. Usually ICECAST_MAX_SOURCES is too low `
-    + "(it needs channels × stream formats). Raise it in .env (for example to 100) and run "
-    + "docker compose up -d icecast, then docker compose restart liquidsoap. Or turn off formats you don't need in Settings › Stream formats.";
-}
-
-// Only admins can do something about it (RAM_CACHE_SIZE in .env).
-function showRamWarning(ram) {
-  const el = $("#ram-warn");
-  el.hidden = !(me.admin && ram && ram.low);
-  if (el.hidden) return;
-  const mb = (b) => `${Math.round(b / (1 << 20))} MB`;
-  el.textContent = `The RAM disk is nearly full (${mb(ram.used)} of ${mb(ram.size)}). New downloads and kept programs `
-    + "now go to disk. Raise RAM_CACHE_SIZE in .env (for example to 2g) and run docker compose up -d.";
+// The admin's warnings (RAM disk nearly full, streams Icecast doesn't have) live on the
+// Admin page; the Admin tab gets a dot so they aren't missed.
+const mb = (b) => `${Math.round(b / (1 << 20))} MB`;
+function showAdminAlerts(s) {
+  const ramLow = !!(s.ram && s.ram.low);
+  const missing = s.missing_streams || [];
+  $("#admin-dot").hidden = !(me.admin && (ramLow || missing.length));
+  $("#t-ram").classList.toggle("warn", ramLow);
+  $("#ram-advice").hidden = !ramLow;
+  if (ramLow) {
+    $("#ram-advice").textContent = "Nearly full: new downloads and kept programs now go to disk. Raise RAM_CACHE_SIZE in .env "
+      + "(for example to 2g), run docker compose up -d, then restart liquidsoap and icecast.";
+  }
+  $("#t-streams").classList.toggle("warn", missing.length > 0);
+  $("#streams-advice").hidden = !missing.length;
+  if (missing.length) {
+    const shown = missing.slice(0, 4).map((m) => "/" + m).join(", ") + (missing.length > 4 ? ` and ${missing.length - 4} more` : "");
+    $("#streams-advice").textContent = `Icecast doesn't have ${shown}, so those streams don't play. Usually ICECAST_MAX_SOURCES is too low `
+      + "(it needs channels × stream formats). Raise it in .env (for example to 100) and run "
+      + "docker compose up -d icecast, then docker compose restart liquidsoap. Or switch off formats you don't need above.";
+  }
 }
 
 function connectLive() {
@@ -456,6 +473,7 @@ async function refresh() {
   } catch (e) {
     $("#np-mode").textContent = "Controller unreachable";
     $("#live-dot").className = "dot";
+    $("#pbar").classList.add("lost");
   }
 }
 
@@ -611,8 +629,9 @@ function renderChannelStatus() {
   let label = MODE_LABEL[np.mode] || np.mode;
   if (np.mode === "cutin" && KIND_NAME[np.kind]) label += ` · ${KIND_NAME[np.kind]}`;
   $("#np-mode").textContent = label;
-  $("#np-title").textContent = nowTitle(np);
+  $("#np-title .roll").textContent = nowTitle(np);
   setArt($("#np-art"), np.art);
+  voiceWave($("#np-title"), s.channel.id, np);
   const sub = np.mode === "station" || np.mode === "program" ? (np.title ? `Stream title: “${np.artist ? np.artist + " – " : ""}${np.title}”` : "") : np.mode === "cutin" ? np.source : nowWhy(np);
   $("#np-source").textContent = !s.station && np.mode === "silence" ? "Add a station under Sources to get started." : np.error && !sub.includes(np.error) ? [sub, np.error].filter(Boolean).join(" · ") : sub;
   $("#np-source").classList.toggle("bad", !!np.error);
@@ -664,18 +683,22 @@ function renderChannelStatus() {
       : [el("li", { class: "empty" }, "Nothing waiting.")]),
   );
 
-  // listen links
+  // listen links: one tile per stream
   const q = `&channel=${encodeURIComponent(s.channel.id)}`;
+  const heard = s.stream_listeners;
   $("#listen-links").replaceChildren(
-    ...Object.entries(s.streams).map(([fmt, url]) =>
-      el("li", {},
-        el("strong", {}, fmt.toUpperCase().replace(/^AAC(\d+)$/, "AAC $1")),
-        el("code", {}, url),
-        el("button", { class: "small-btn", onclick: () => copy(url) }, "Copy"),
-        el("a", { href: `/listen.m3u?fmt=${fmt}${q}`, class: "small" }, ".m3u"),
-        el("a", { href: `/listen.pls?fmt=${fmt}${q}`, class: "small" }, ".pls"),
-      ),
-    ),
+    ...Object.entries(s.streams).map(([fmt, url]) => {
+      const missing = (s.missing_streams || []).includes(`${s.channel.mount}.${fmt}`);
+      const n = heard ? heard[fmt] || 0 : null;
+      return el("div", { class: "stile" + (missing ? " missing" : "") },
+        el("div", { class: "row between" }, el("strong", {}, streamName(fmt)), signalBars(streamKbps(fmt))),
+        el("div", { class: "small muted" },
+          missing ? "missing on Icecast" : [`${Math.round(streamKbps(fmt) * 0.45)} MB/h`, n == null ? "" : n ? `${n} listening` : "nobody"].filter(Boolean).join(" · ")),
+        el("div", { class: "row gap stile-actions" },
+          el("button", { class: "small-btn", title: url, onclick: () => copy(url) }, "Copy link"),
+          el("a", { href: `/listen.m3u?fmt=${fmt}${q}`, class: "small" }, ".m3u"),
+          el("a", { href: `/listen.pls?fmt=${fmt}${q}`, class: "small" }, ".pls")));
+    }),
   );
   $("#listeners").textContent = s.listeners == null ? "" : `${plural(s.listeners, "listener")} right now`;
 
@@ -907,12 +930,15 @@ $("#btn-skip-song").addEventListener("click", skip);
 $("#form-play-url").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const f = ev.target;
+  const btn = $(".primary", f);
+  btn.disabled = true;
   try {
     const it = await api("/api/play-url", { method: "POST", body: { url: f.url.value, channel: channelId } });
     toast(`Queued: ${it.title}`);
-    f.reset();
+    sent(it.title);
+    closeLink();
     refresh();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
 });
 
 // --- stations, programs and their pickers --------------------------------------------------
@@ -1992,7 +2018,6 @@ $("#form-upload").addEventListener("submit", async (ev) => {
 
 function renderSettings() {
   const f = $("#form-settings");
-  for (const c of $$('input[name="streams"]', f)) c.checked = cfg.settings.streams.includes(c.value);
   for (const [k, v] of Object.entries(cfg.settings)) {
     const i = f.elements[k];
     if (!i || k === "streams") continue;
@@ -2016,7 +2041,6 @@ $("#form-settings").addEventListener("submit", (ev) => {
     video_audio: f.video_audio.value,
     cache_in_ram: f.cache_in_ram.checked,
     replay_keep: f.replay_keep.checked,
-    streams: $$('input[name="streams"]:checked', f).map((c) => c.value),
     navidrome_url: f.navidrome_url.value,
     navidrome_user: f.navidrome_user.value,
     navidrome_password: f.navidrome_password.value,
@@ -2058,7 +2082,7 @@ function voiceReset() {
   if (a.src) URL.revokeObjectURL(a.src);
   a.removeAttribute("src");
   $("#voice-preview").hidden = true;
-  $("#voice-time").hidden = true;
+  $("#voice-time").textContent = "Record a voice message";
   $("#voice-title").value = "";
 }
 
@@ -2080,6 +2104,7 @@ async function sendVoice(target) {
   try {
     const r = await api("/api/voice", { method: "POST", body: fd });
     toast(r.channels.length > 1 ? `Playing on ${plural(r.channels.length, "channel")}` : "Playing next");
+    sent(($("#voice-title").value || "Voice message") + (target === "all" ? " (all channels)" : ""), target);
     voiceReset();
     refresh();
   } catch (e) {
@@ -2093,7 +2118,7 @@ $("#btn-voice-rec").addEventListener("click", async () => {
   const btn = $("#btn-voice-rec");
   if (recorder) { recorder.stop(); return; }
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    toast("This browser can only record over HTTPS (or on localhost). Use the file field below instead.", true);
+    toast("This browser can only record over HTTPS (or on localhost). Use “Send an audio file” instead.", true);
     return;
   }
   let stream;
@@ -2112,17 +2137,16 @@ $("#btn-voice-rec").addEventListener("click", async () => {
     stream.getTracks().forEach((t) => t.stop());
     clearInterval(voiceTimer);
     $("#voice-time").textContent = $("#voice-time").textContent.replace("Recording", "Length");
-    btn.textContent = "● Record";
+    $("b", btn).textContent = "● Talk";
     btn.classList.remove("recording");
     const type = recorder.mimeType;
     recorder = null;
     showVoice(new Blob(chunks, { type }));
   };
   recorder.start();
-  btn.textContent = "■ Stop";
+  $("b", btn).textContent = "■ Stop";
   btn.classList.add("recording");
   const t = $("#voice-time");
-  t.hidden = false;
   const show = () => {
     const s = Math.round((Date.now() - started) / 1000);
     t.textContent = `Recording ${fmtTime(s)}`;
@@ -2141,7 +2165,7 @@ $("#btn-voice-send").addEventListener("click", () => sendVoice(channelId));
 $("#btn-voice-all").addEventListener("click", () => sendVoice("all"));
 $("#btn-voice-discard").addEventListener("click", voiceReset);
 if (!navigator.mediaDevices?.getUserMedia) {
-  $("#voice-hint").textContent = "Recording in the browser needs HTTPS (or localhost). You can still send a recording from your phone's voice recorder as a file.";
+  $("#voice-hint").prepend("Recording in the browser needs HTTPS (or localhost); you can still send a recording as a file. ");
 }
 
 // --- app devices ----------------------------------------------------------------------------
@@ -2332,11 +2356,315 @@ function renderConfig() {
   }
   if (view === "sources") { renderSources(); renderMedia(); }
   if (view === "settings") { if (me.admin) renderSettings(); renderPairChannels(); }
+  renderSendRecent();
 }
 
 async function loadConfig() {
   cfg = await api("/api/config");
   renderConfig();
+}
+
+// --- streams: names, data and signal bars ----------------------------------------------
+
+const STREAM_INFO = { mp3: ["MP3", 128], aac: ["AAC", 96], opus: ["Opus", 96], aac48: ["AAC", 48], aac192: ["AAC", 192] };
+const streamKbps = (id) => (STREAM_INFO[id] || ["", 128])[1];
+const streamName = (id) => (STREAM_INFO[id] ? `${STREAM_INFO[id][0]} ${STREAM_INFO[id][1]}` : id.toUpperCase());
+// Like the app: one bar for data saver, two for normal, three for best.
+function signalBars(kbps) {
+  const tier = kbps <= 48 ? 1 : kbps <= 128 ? 2 : 3;
+  return el("span", { class: "sbars", title: ["", "Data saver", "Normal", "Best"][tier], "aria-hidden": "true" },
+    ...[1, 2, 3].map((i) => el("i", { class: i <= tier ? "lit" : "" })));
+}
+
+// --- player bar: the in-page player on every page --------------------------------------
+
+let barPick = null; // the channel picked in the bar while nothing plays
+try { player.volume = Math.min(1, Math.max(0, Number(localStorage.getItem("volume") ?? 1))); } catch {}
+$("#pb-vol").value = player.volume;
+$("#pb-vol").addEventListener("input", (e) => {
+  player.volume = Number(e.target.value);
+  try { localStorage.setItem("volume", e.target.value); } catch {}
+});
+$("#pb-channel").addEventListener("change", (e) => {
+  barPick = e.target.value;
+  if (listenCh) startListening(barPick); // playing: switch over right away
+  else renderPlayerBar();
+});
+
+const barChannel = () => {
+  const chans = status?.channels || [];
+  const id = [listenCh, barPick, channelId].find((c) => c && chans.some((x) => x.id === c));
+  return chans.find((c) => c.id === id) || chans[0] || null;
+};
+
+function renderPlayerBar() {
+  const bar = $("#pbar");
+  const c = barChannel();
+  bar.hidden = !c;
+  document.body.classList.toggle("has-pbar", !!c);
+  if (!c) return;
+  const np = c.now || { mode: "offline" };
+  $("#pb-play").dataset.listen = c.id;
+  $("#pb-title .roll").textContent = nowTitle(np);
+  const mode = { station: "Station", program: "Program", cutin: KIND_NAME[np.kind] || "Cut-in", silence: "Waiting", offline: "Offline" }[np.mode] || "";
+  $("#pb-sub").textContent = [c.name, mode, np.mode === "cutin" ? np.source : np.mode === "station" || np.mode === "program" ? np.source : ""]
+    .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(" · ");
+  const art = $("#pb-art");
+  const src = np.art || "/static/logo.svg";
+  if (art.getAttribute("src") !== src) art.src = src;
+  art.onerror = () => { if (art.getAttribute("src") !== "/static/logo.svg") art.src = "/static/logo.svg"; };
+  const pick = $("#pb-channel");
+  const chans = status.channels;
+  if (pick.options.length !== chans.length || chans.some((x, i) => pick.options[i].value !== x.id || pick.options[i].text !== x.name)) {
+    pick.replaceChildren(...chans.map((x) => el("option", { value: x.id }, x.name)));
+  }
+  pick.value = c.id;
+  pick.hidden = chans.length < 2;
+  bar.classList.remove("lost");
+  voiceWave($("#pb-title"), c.id, np);
+  showLostSignal();
+}
+
+// --- lost signal: snow and vertical hold while the player reconnects ---------------------
+// Like the app's "snow on reconnect": the picture fills with static and the title rolls
+// like a TV losing vertical hold, only while this browser is looking for the stream.
+
+(function makeNoise() {
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = 96;
+  const ctx = cv.getContext("2d");
+  const img = ctx.createImageData(96, 96);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = Math.random() * 255;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+    img.data[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  document.documentElement.style.setProperty("--noise", `url(${cv.toDataURL()})`);
+})();
+
+function showLostSignal() {
+  const lost = !!listenCh && playerState === "connecting";
+  const c = barChannel();
+  $("#pbar").classList.toggle("lost", lost && !!c && c.id === listenCh);
+  $("#view-channel .onair").classList.toggle("lost", lost && listenCh === channelId);
+}
+
+// --- voice waveform in the title -----------------------------------------------------------
+// While a voice message is on air, its waveform sits behind the title (the app does the same).
+// The clip comes from /api/now/audio; `waveform` keeps this from counting as a listener.
+
+const waves = new Map(); // clip key -> peaks (array of 0..1), or "loading" / "none"
+
+async function loadWave(cid, key) {
+  waves.set(key, "loading");
+  try {
+    const r = await fetch(`/api/now/audio?channel=${encodeURIComponent(cid)}&key=${encodeURIComponent(key)}&waveform=true`, { credentials: "same-origin" });
+    if (!r.ok) throw new Error(r.status);
+    const Ctx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const audio = await new Ctx(1, 8000, 8000).decodeAudioData(await r.arrayBuffer());
+    const data = audio.getChannelData(0);
+    const n = 96;
+    const step = Math.max(1, Math.floor(data.length / n));
+    const peaks = [];
+    for (let i = 0; i < n; i++) {
+      let m = 0;
+      for (let j = i * step; j < Math.min(data.length, (i + 1) * step); j++) m = Math.max(m, Math.abs(data[j]));
+      peaks.push(m);
+    }
+    const top = Math.max(...peaks, 0.01);
+    waves.set(key, peaks.map((p) => p / top));
+  } catch {
+    waves.set(key, "none"); // a format this browser can't decode: no waveform, nothing else changes
+  }
+  if (waves.size > 20) waves.delete(waves.keys().next().value);
+  renderStatus();
+}
+
+function voiceWave(box, cid, np) {
+  const cv = $("canvas.wave", box);
+  const isVoice = np && np.mode === "cutin" && np.kind === "voice" && np.key;
+  const peaks = isVoice ? waves.get(np.key) : null;
+  if (isVoice && peaks === undefined) loadWave(cid, np.key);
+  const show = Array.isArray(peaks);
+  box.classList.toggle("voice", show);
+  if (!show) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = box.clientWidth, h = box.clientHeight;
+  if (!w || !h) return;
+  cv.width = Math.round(w * dpr);
+  cv.height = Math.round(h * dpr);
+  const ctx = cv.getContext("2d");
+  ctx.scale(dpr, dpr);
+  const played = np.duration ? Math.min(1, np.elapsed / np.duration) : 0;
+  const color = getComputedStyle(document.documentElement).getPropertyValue("--clip").trim() || "#60a5fa";
+  const bw = w / peaks.length;
+  peaks.forEach((p, i) => {
+    const bh = Math.max(2, p * h * 0.9);
+    ctx.globalAlpha = i / peaks.length < played ? 0.55 : 0.22;
+    ctx.fillStyle = color;
+    ctx.fillRect(i * bw + bw * 0.2, (h - bh) / 2, Math.max(1, bw * 0.6), bh);
+  });
+}
+
+// --- send card: link and talk in one place ------------------------------------------------
+
+const looksLikeUrl = (t) => /^https?:\/\/\S+$/i.test((t || "").trim());
+
+function openLink(url = "") {
+  const f = $("#form-play-url");
+  f.hidden = false;
+  if (url) f.url.value = url.trim();
+  linkChanged();
+  f.url.focus();
+}
+function closeLink() {
+  const f = $("#form-play-url");
+  f.reset();
+  f.hidden = true;
+  linkChanged();
+}
+function linkChanged() {
+  const v = $("#form-play-url").url.value.trim();
+  $("#send-suggest").hidden = !looksLikeUrl(v);
+  if (looksLikeUrl(v)) {
+    try { const u = new URL(v); $("#send-what").textContent = (u.hostname.replace(/^www\./, "") + u.pathname).slice(0, 60); } catch { $("#send-what").textContent = v; }
+  }
+}
+$("#tile-link").addEventListener("click", () => ($("#form-play-url").hidden ? openLink() : closeLink()));
+$("#btn-link-cancel").addEventListener("click", closeLink);
+$("#form-play-url").url.addEventListener("input", linkChanged);
+$("#btn-paste").addEventListener("click", async () => {
+  try { openLink(await navigator.clipboard.readText()); } catch { toast("The browser didn't allow reading the clipboard. Paste with Ctrl+V or ⌘V.", true); }
+});
+// Pasting a link anywhere on a channel page (outside a text field) opens it in the Send card.
+document.addEventListener("paste", (e) => {
+  if (view !== "channel" || document.body.classList.contains("readonly")) return;
+  if (e.target.closest?.("input, textarea, select, [contenteditable]")) return;
+  const text = e.clipboardData?.getData("text") || "";
+  if (!looksLikeUrl(text)) return;
+  e.preventDefault();
+  openLink(text);
+});
+
+// "Over." like a radio operator, after anything was sent.
+let overTimer = null;
+function sent(title, target = channelId) {
+  const o = $("#send-over");
+  o.textContent = "Over.";
+  o.classList.add("show");
+  clearTimeout(overTimer);
+  overTimer = setTimeout(() => o.classList.remove("show"), 1600);
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem("sent") || "[]"); } catch {}
+  list.unshift({ title, channel: target, ts: Math.floor(Date.now() / 1000) });
+  try { localStorage.setItem("sent", JSON.stringify(list.slice(0, 5))); } catch {}
+  renderSendRecent();
+}
+
+function renderSendRecent() {
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem("sent") || "[]"); } catch {}
+  const name = (id) => (id === "all" ? "" : cfg?.channels.find((c) => c.id === id)?.name || "");
+  $("#send-recent").replaceChildren(
+    ...(list.length ? [el("li", { class: "small muted send-recent-head" }, "Sent from this browser")] : []),
+    ...list.slice(0, 3).map((i) =>
+      el("li", { class: "small" }, el("span", { class: "grow ellipsis" }, i.title), el("span", { class: "muted" }, [name(i.channel), fmtAgo(i.ts)].filter(Boolean).join(" · ")))),
+  );
+}
+
+// --- admin page ------------------------------------------------------------------------------
+
+let adminTimer = null;
+async function loadAdmin() {
+  clearTimeout(adminTimer);
+  if (view !== "admin") return;
+  const [health, streams, devs] = await Promise.all([
+    api("/api/health").catch(() => null),
+    api("/api/streams").catch(() => null),
+    api("/api/devices").catch(() => null),
+  ]);
+  if (view !== "admin") return;
+  renderHealth(health);
+  renderAdminStreams(streams);
+  renderAdminDevices(devs);
+  renderAdminStatus();
+  adminTimer = setTimeout(() => { if (!document.hidden) loadAdmin(); else adminTimer = setTimeout(loadAdmin, 15000); }, 15000);
+}
+
+function hlRow(label, value, cls = "") {
+  return el("li", {}, el("span", {}, label), el("span", { class: cls }, value));
+}
+
+function renderHealth(h) {
+  if (!h) { $("#health-list").replaceChildren(el("li", { class: "bad" }, "The controller didn't answer.")); return; }
+  const gb = (b) => `${(b / (1 << 30)).toFixed(b < 10 << 30 ? 1 : 0)} GB`;
+  const missing = (h.missing_streams || []).length;
+  $("#health-list").replaceChildren(
+    hlRow("Audio engine", h.stream.ok ? `● on air, ${h.stream.on_air} of ${h.stream.channels}` : "● not on air", h.stream.ok ? "ok" : "bad"),
+    hlRow("Icecast", !h.stream.icecast ? "● not reachable" : missing ? `● ${plural(missing, "stream")} missing` : "● all streams there",
+      !h.stream.icecast ? "bad" : missing ? "warn-text" : "ok"),
+    hlRow("Invidious", h.invidious.ok ? `● answers in ${h.invidious.seconds} s` : `● ${h.invidious.error || "no answer"}`, h.invidious.ok ? "ok" : "bad"),
+    hlRow("Disk", `${gb(h.disk.free)} free of ${gb(h.disk.size)}`, h.disk.ok ? "" : "warn-text"),
+  );
+  $("#t-health").classList.toggle("warn", !h.stream.ok || !h.invidious.ok || !h.disk.ok || missing > 0);
+  const rows = h.listeners || [];
+  const total = rows.reduce((n, r) => n + (r.listeners || 0) + (r.phones || 0), 0);
+  $("#listen-total").textContent = rows.some((r) => r.listeners != null) ? String(total) : "—";
+  $("#listen-list").replaceChildren(
+    ...rows.filter((r) => r.listeners || r.phones).map((r) =>
+      hlRow(r.name, [r.listeners ? `${r.listeners} on the stream` : "", r.phones ? `${r.phones} playing back` : ""].filter(Boolean).join(" · "))),
+    ...(total ? [] : [el("li", { class: "muted" }, rows.some((r) => r.listeners != null) ? "Nobody right now." : "Icecast can't be asked right now.")]),
+  );
+}
+
+function renderAdminStreams(st) {
+  if (!st) return;
+  const missingIds = new Set((st.missing || []).map((m) => m.split(".").pop()));
+  $("#admin-streams").replaceChildren(...st.streams.map((x) => {
+    const missing = x.on && missingIds.has(x.id);
+    const line = !x.on ? "off" : missing ? "on, but missing on Icecast"
+      : [`${x.mb_per_hour} MB/h`, x.listeners == null ? "" : x.listeners ? `${x.listeners} listening` : "nobody"].filter(Boolean).join(" · ");
+    return el("button", {
+      type: "button", class: "stile" + (x.on ? "" : " off") + (missing ? " missing" : ""), "aria-pressed": String(x.on),
+      title: x.on ? "Switch off for everyone" : "Switch on for everyone",
+      onclick: async () => {
+        const on = st.streams.filter((y) => (y.id === x.id ? !y.on : y.on)).map((y) => y.id);
+        try {
+          renderAdminStreams(await api("/api/streams", { method: "PUT", body: { on } }));
+          toast(`${streamName(x.id)} ${x.on ? "off" : "on"}. The audio engine restarts for a few seconds.`);
+          loadConfig();
+        } catch (e) { toast(e.message, true); }
+      },
+    },
+    el("span", { class: "row between" }, el("strong", {}, streamName(x.id)), signalBars(x.kbps)),
+    el("span", { class: "small muted" }, line));
+  }));
+}
+
+function renderAdminDevices(d) {
+  if (!d) return;
+  $("#admin-devices").replaceChildren(
+    ...(d.devices.length
+      ? d.devices.slice(0, 6).map((x) => hlRow(x.name, `${x.role === "admin" ? "admin" : "listen + control"} · ${x.last_seen ? fmtAgo(x.last_seen) : "never used"}`))
+      : [el("li", { class: "muted" }, "No apps paired yet.")]),
+    ...(d.devices.length > 6 ? [el("li", { class: "muted" }, `and ${d.devices.length - 6} more under Settings`)] : []),
+  );
+}
+
+// The RAM tile follows the live status, like the warning it replaced.
+function renderAdminStatus() {
+  const ram = status?.ram;
+  if (!ram) {
+    $("#ram-used").textContent = "—";
+    $("#ram-of").textContent = "No RAM disk";
+    $("#ram-ring").setAttribute("stroke-dasharray", "0 100");
+    return;
+  }
+  const pct = Math.min(100, Math.round((100 * ram.used) / ram.size));
+  $("#ram-used").textContent = mb(ram.used);
+  $("#ram-of").textContent = `of ${mb(ram.size)}${ram.kept ? ` · kept shows ${mb(ram.kept)}` : ""}`;
+  $("#ram-ring").setAttribute("stroke-dasharray", `${pct} 100`);
 }
 
 // --- start -------------------------------------------------------------------------

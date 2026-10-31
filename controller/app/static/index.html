@@ -19,6 +19,7 @@
       <a href="#/home" data-view="home">Home</a>
       <a href="#/schedule" data-view="schedule">Schedule</a>
       <a href="#/sources" data-view="sources">Sources</a>
+      <a href="#/admin" data-view="admin" class="admin-only">Admin<i class="nav-dot" id="admin-dot" hidden title="Something needs a look"></i></a>
       <a href="#/settings" data-view="settings">Settings</a>
     </nav>
     <button type="button" id="btn-logout" class="small-btn logout" hidden>Log out</button>
@@ -27,8 +28,6 @@
   <audio id="player" preload="none"></audio>
 
   <main>
-    <p id="ram-warn" class="banner" hidden></p>
-    <p id="streams-warn" class="banner" hidden></p>
     <!-- HOME -->
     <section id="view-home" class="view">
       <div class="page-head">
@@ -70,10 +69,10 @@
               <button class="big-play" data-listen aria-label="Listen here">▶</button>
               <div class="grow">
                 <div class="label" id="np-mode">Connecting…</div>
-                <div class="np-title" id="np-title">&nbsp;</div>
+                <div class="np-title wave-title" id="np-title"><canvas class="wave" aria-hidden="true"></canvas><span class="roll">&nbsp;</span></div>
                 <div class="np-source" id="np-source"></div>
               </div>
-              <img class="np-art hidden" id="np-art" alt="">
+              <div class="art-wrap" id="np-art-wrap"><img class="np-art hidden" id="np-art" alt=""></div>
             </div>
             <div class="progress hidden" id="np-progress"><div id="np-bar"></div></div>
             <div class="np-times hidden" id="np-times"><span id="np-elapsed"></span><span id="np-duration"></span></div>
@@ -101,20 +100,21 @@
         </div>
 
         <aside class="split-side">
-          <form id="form-play-url" class="card stack edit-only">
-            <h3>Cut in now</h3>
-            <label class="field">Video link or audio URL
-              <input name="url" placeholder="https://…" required>
-            </label>
-            <button>Play on <span data-channel-name></span></button>
-          </form>
-
-          <div class="card stack edit-only" id="voice-card">
-            <h3>Voice message</h3>
-            <p class="small muted" id="voice-hint">Record a message; it cuts in like an announcement and is deleted after playing.</p>
-            <div class="row gap">
-              <button type="button" class="primary" id="btn-voice-rec">● Record</button>
-              <span class="small muted voice-time" id="voice-time" hidden></span>
+          <div class="card edit-only send-card" id="send-card">
+            <div class="row between"><h3>Send to <span data-channel-name></span></h3><span class="over" id="send-over" aria-live="polite"></span></div>
+            <form id="form-play-url" class="send-link" hidden>
+              <div class="row gap nowrap">
+                <input name="url" placeholder="Video, podcast or audio link" aria-label="Link" required>
+                <button type="button" class="small-btn" id="btn-paste">Paste</button>
+              </div>
+              <div class="send-suggest" id="send-suggest" hidden>
+                <span class="small">Send <strong id="send-what"></strong></span>
+                <div class="row gap"><button class="primary">Play on <span data-channel-name></span></button><button type="button" class="small-btn" id="btn-link-cancel">Cancel</button></div>
+              </div>
+            </form>
+            <div class="send-tiles">
+              <button type="button" class="send-tile" id="tile-link"><b>🔗 Link</b><span>Video, podcast or audio URL</span></button>
+              <button type="button" class="send-tile" id="btn-voice-rec"><b>● Talk</b><span id="voice-time">Record a voice message</span></button>
             </div>
             <div class="stack" id="voice-preview" hidden>
               <audio id="voice-audio" controls preload="auto"></audio>
@@ -125,9 +125,8 @@
                 <button type="button" class="small-btn" id="btn-voice-discard">Discard</button>
               </div>
             </div>
-            <label class="field small" id="voice-upload">Or send an audio file
-              <input type="file" id="voice-file" accept="audio/*" capture>
-            </label>
+            <p class="small muted" id="voice-hint">Voice messages cut in like an announcement and are deleted after playing. <label class="file-link">Send an audio file<input type="file" id="voice-file" accept="audio/*" capture></label></p>
+            <ul class="send-recent" id="send-recent"></ul>
           </div>
 
           <div class="card">
@@ -138,7 +137,7 @@
           <div class="card">
             <h3>Listen elsewhere</h3>
             <p class="muted small">Open in VLC, Home Assistant, a smart speaker or any radio app.</p>
-            <ul class="links" id="listen-links"></ul>
+            <div class="stream-tiles" id="listen-links"></div>
             <p class="muted small" id="listeners"></p>
           </div>
 
@@ -335,6 +334,54 @@
     </section>
 
     <!-- SETTINGS -->
+    <!-- ADMIN -->
+    <section id="view-admin" class="view">
+      <div class="page-head">
+        <div>
+          <h2 class="page-title">Admin</h2>
+          <p class="muted">How the radio is doing, at a glance. Updates by itself while this page is open.</p>
+        </div>
+      </div>
+      <div class="admin-grid">
+        <div class="card tile" id="t-health">
+          <h3>Health</h3>
+          <ul class="hl" id="health-list"><li class="muted">Asking…</li></ul>
+        </div>
+        <div class="card tile" id="t-ram">
+          <h3>RAM</h3>
+          <div class="ram-row">
+            <svg class="ring" viewBox="0 0 86 86" aria-hidden="true"><circle cx="43" cy="43" r="36" class="ring-bg"/><circle cx="43" cy="43" r="36" class="ring-fg" id="ram-ring" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 43 43)"/></svg>
+            <div><div class="big" id="ram-used">—</div><div class="small muted" id="ram-of"></div></div>
+          </div>
+          <p class="small warn-text" id="ram-advice" hidden></p>
+        </div>
+        <div class="card tile" id="t-listen">
+          <h3>Listening now</h3>
+          <div class="big" id="listen-total">—</div>
+          <ul class="hl" id="listen-list"></ul>
+        </div>
+        <div class="card tile span2" id="t-streams">
+          <h3>Streams your server makes</h3>
+          <div class="stream-tiles wide" id="admin-streams"></div>
+          <p class="small muted">Click a stream to switch it on or off for every channel. Each phone picks its own from the ones that are on.</p>
+          <p class="small warn-text" id="streams-advice" hidden></p>
+        </div>
+        <div class="card tile" id="t-devices">
+          <div class="row between"><h3>Apps and devices</h3><a class="button small-btn" href="#/settings" data-goto="devices-card">Pair a phone</a></div>
+          <ul class="hl" id="admin-devices"></ul>
+        </div>
+        <div class="card tile span3">
+          <h3>Server settings</h3>
+          <div class="set-links">
+            <a href="#/settings" data-goto="server-settings"><strong>General</strong><span>Name, time zone, Invidious, downloads</span></a>
+            <a href="#/settings" data-goto="music-server"><strong>Music server</strong><span>Navidrome or another Subsonic server</span></a>
+            <a href="#/settings" data-goto="users-card"><strong>Users</strong><span>Logins and their channels</span></a>
+            <a href="#/settings" data-goto="backup-card"><strong>Backup</strong><span>config.yaml, full backup, import</span></a>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section id="view-settings" class="view">
       <div class="card user-only" id="account-card">
         <h2>Your account</h2>
@@ -365,7 +412,7 @@
           </div>
         </form>
       </div>
-      <div class="card admin-only">
+      <div class="card admin-only" id="server-settings">
         <h2>Settings</h2>
         <form id="form-settings" class="settings">
           <label>Station name <input name="station_name"></label>
@@ -377,14 +424,7 @@
           <label>Check sources every (minutes) <input name="poll_minutes" type="number" min="1" step="1"></label>
           <label>Ignore items older than (hours, 0 = no limit) <input name="max_age_hours" type="number" min="0" step="1"></label>
           <label>Keep trying live videos and failed downloads for (hours) <input name="live_wait_hours" type="number" min="1" step="1"></label>
-          <fieldset class="formats">
-            <legend>Stream formats</legend>
-            <label class="check"><input type="checkbox" name="streams" value="mp3"> <span><strong>MP3</strong> 128 kbps · plays everywhere (VLC, browsers, Home Assistant, Sonos, car apps)</span></label>
-            <label class="check"><input type="checkbox" name="streams" value="aac"> <span><strong>AAC</strong> 96 kbps · same quality at less data, good for phones over Tailscale</span></label>
-            <label class="check"><input type="checkbox" name="streams" value="opus"> <span><strong>Opus</strong> 96 kbps · best quality per bit, but some speakers and cars can't play it</span></label>
-            <label class="check"><input type="checkbox" name="streams" value="aac48"> <span><strong>AAC 48</strong> kbps · data saver, about 22 MB per hour · fine for talk and news</span></label>
-            <label class="check"><input type="checkbox" name="streams" value="aac192"> <span><strong>AAC 192</strong> kbps · best, about 86 MB per hour · for your own music on good speakers</span></label>
-          </fieldset>
+          <p class="small muted">Stream formats are switched on and off under <a href="#/admin">Admin › Streams</a>.</p>
           <label>Video audio quality
             <select name="video_audio">
               <option value="small">Small · Opus ~70 kbps · faster</option>
@@ -396,7 +436,7 @@
           <label class="check"><input name="cache_in_ram" type="checkbox"> Keep downloads in RAM instead of on disk (no SSD writes; clips are deleted after playing either way)</label>
           <label class="check"><input name="replay_keep" type="checkbox"> Keep voice messages for a day, so the apps can play them again from the history (other clips are fetched again from their source)</label>
           <label class="check"><input name="ytdlp_fallback" type="checkbox"> Fall back to yt-dlp if Invidious can't deliver audio (contacts the video site directly)</label>
-          <fieldset class="formats">
+          <fieldset class="formats" id="music-server">
             <legend>Music server</legend>
             <span class="small muted">For stations and programs that play your own music: Navidrome, Gonic, Airsonic, Ampache, LMS, Funkwhale or any other Subsonic server. Funkwhale wants the address ending in /api/subsonic.</span>
             <label>URL <input name="navidrome_url" placeholder="http://host.docker.internal:4533"></label>
@@ -449,7 +489,7 @@
         <h3 class="paired-head">Paired</h3>
         <div id="devices-list" class="stack"></div>
       </div>
-      <div class="card">
+      <div class="card" id="backup-card">
         <h2><span class="admin-only">Backup, export and import</span><span class="user-only">Import a channel</span></h2>
         <p class="muted admin-only">Everything here is stored in <code>config.yaml</code> in the data volume. You can edit it by hand; changes are picked up automatically.</p>
         <p class="muted user-only">Import a channel someone exported with <em>Export channel</em>. It becomes one of your channels.</p>
@@ -466,6 +506,17 @@
       </div>
     </section>
   </main>
+
+  <div class="pbar" id="pbar" hidden>
+    <div class="art-wrap pb-art"><img id="pb-art" alt=""></div>
+    <div class="grow pb-text">
+      <div class="pb-title wave-title" id="pb-title"><canvas class="wave" aria-hidden="true"></canvas><span class="roll"></span></div>
+      <div class="small muted pb-sub" id="pb-sub"></div>
+    </div>
+    <button class="pb-play" id="pb-play" data-listen="" aria-label="Listen here">▶</button>
+    <input type="range" class="pb-vol" id="pb-vol" min="0" max="1" step="0.02" value="1" aria-label="Volume">
+    <select id="pb-channel" aria-label="Channel to listen to"></select>
+  </div>
 
   <div id="toast" class="toast hidden"></div>
   <div id="tl-pop" class="tl-pop hidden" role="dialog" aria-label="Details"></div>
