@@ -506,6 +506,12 @@ someone else's public channel, which the app can only listen to). Keys are store
 in `state.db`, so they never end up in `config.yaml` or a backup. A removed or
 unknown key gets `401`, a forbidden action `403`.
 
+Before an app sends its key to an address it isn't sure of (the home address
+on a Wi-Fi that may not be home), it asks `GET /api/hello?device=<id>&nonce=<random>`,
+which needs no key. A radio that knows the device answers
+`{"rradio": true, "proof": HMAC-SHA256(key = SHA-256 hex of the device key, nonce)}`;
+anything else gets no key.
+
 `GET /api/events?channel=<id>` is a live feed (Server-Sent Events) with the same
 JSON as `/api/status`: one `data:` line right away, then a new one only when
 something changes (a clip starts, the queue or station changes, a download

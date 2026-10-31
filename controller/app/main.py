@@ -111,7 +111,7 @@ async def basic_auth(request: Request, call_next):
         if not a.admin and not _allowed(MEMBER_ROUTES, request):
             return JSONResponse({"detail": "this device is not allowed to do that"}, status_code=403)
     path = request.url.path
-    open_paths = ("/listen.", "/healthz", "/static/", "/login", "/api/login", "/api/art/now/", "/api/pair") + (("/api/widget",) if WIDGET_PUBLIC else ())
+    open_paths = ("/listen.", "/healthz", "/static/", "/login", "/api/login", "/api/art/now/", "/api/pair", "/api/hello") + (("/api/widget",) if WIDGET_PUBLIC else ())
     if a is None and UI_PASSWORD and not path.startswith(open_paths):
         # The browser logs in on /login and gets a cookie; dashboards and scripts may send Basic auth.
         a = await run_in_threadpool(session_access, request.cookies.get(COOKIE, ""))
@@ -1045,12 +1045,14 @@ async def put_streams(body: StreamsEdit):
 
 
 @app.get("/api/now/audio")
-async def now_audio(request: Request, channel: str | None = None, key: str | None = None):
+async def now_audio(request: Request, channel: str | None = None, key: str | None = None, waveform: bool = False):
     """The cut-in on air now, for one listener: lets the apps scroll back in a clip
     while the radio plays it. With `key` (now.key in the status) it answers 410 once
-    that clip is over, rather than serving the next one."""
+    that clip is over, rather than serving the next one. With `waveform` (the apps measuring a
+    voice message for its waveform) the phone doesn't count as listening."""
     ch = listen_channel(channel)
-    heard_again(ch.id)
+    if not waveform:
+        heard_again(ch.id)
     info = engine.now_audio(ch.id, key)
     if not info:
         raise HTTPException(410, "that clip is over")
@@ -1534,6 +1536,19 @@ async def pair(body: PairRedeem, request: Request):
     chans = _channels_of(device_access(dev))
     return {"token": token, "device": dev.public(), "station_name": store.config.settings.station_name,
             "channels": chans, "streams": {c["id"]: stream_urls(request, c["id"]) for c in chans}}
+
+
+@app.get("/api/hello")
+async def hello(device: str, nonce: str):
+    """Lets an app check that an address is its own radio before it sends its device key
+    there (a home address on someone else's Wi-Fi could be anyone). Open, and needs no key:
+    the answer is an HMAC of the app's nonce, keyed with the hash of that device's key."""
+    if not 16 <= len(nonce) <= 128 or len(device) > 64:
+        raise HTTPException(400, "nonce must be 16 to 128 characters")
+    proof = await run_in_threadpool(devices.proof, device, nonce)
+    if proof is None:
+        raise HTTPException(404, "unknown device")
+    return {"rradio": True, "proof": proof}
 
 
 @app.get("/api/me")

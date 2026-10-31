@@ -14,6 +14,7 @@ that can control the user's own channels and listen to public ones.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 import sqlite3
 import threading
@@ -96,6 +97,15 @@ class Devices:
                 "SELECT id, name, role, channels, created, last_seen, user_id FROM devices ORDER BY created"
             ).fetchall()
         return [d for d in map(self._row, rows) if user_id is None or d.user_id == user_id]
+
+    def proof(self, device_id: str, nonce: str) -> str | None:
+        """Proves this server knows a device's key without the key travelling: HMAC-SHA256
+        of [nonce], keyed with the key's hash. Nil for a device it doesn't know."""
+        with self._lock:
+            r = self._db.execute("SELECT token_hash FROM devices WHERE id=?", (device_id,)).fetchone()
+        if r is None:
+            return None
+        return hmac.new(r[0].encode(), nonce.encode(), hashlib.sha256).hexdigest()
 
     def by_token(self, token: str) -> Device | None:
         with self._lock:
