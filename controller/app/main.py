@@ -72,16 +72,19 @@ app = FastAPI(title="rRadio", version=__version__, lifespan=lifespan, docs_url="
 
 # What a "member" device may call; everything else needs an admin device or the UI password.
 MEMBER_ROUTES = {
-    "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio|now/audio|navidrome/playlists|week|saved|search|week/numbers)"),
-    "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire|history/\d+/(play-next|save)|quiet|queue/order|listening)"),
-    "DELETE": re.compile(r"/api/(queue/.+|history/\d+/(replay|save))"),
+    "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio|now/audio|navidrome/playlists|week|saved|search|week/numbers"
+                      r"|health|ram|streams|devices)"),
+    "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire|history/\d+/(play-next|save)|quiet|queue/order|listening"
+                       r"|devices/pair|me/password)"),
+    "PATCH": re.compile(r"/api/devices/[^/]+"),
+    "DELETE": re.compile(r"/api/(queue/.+|history/\d+/(replay|save)|devices/pair/.+|devices/[^/]+)"),
 }
 
 # What a user (not an admin) may call from the web UI; each call is then limited to
 # the user's own channels, sources, files and devices (or public channels to listen).
 USER_ROUTES = {
     "GET": re.compile(r"/api/(status|events|widget|me|art/.+|images/.+|history/\d+/audio|now/audio|navidrome/playlists|week"
-                      r"|saved|search|week/numbers|config|media|devices|channels/[^/]+/export|spots/[^/]+/info|stations/search)"),
+                      r"|saved|search|week/numbers|config|media|devices|health|ram|streams|channels/[^/]+/export|spots/[^/]+/info|stations/search)"),
     "POST": re.compile(r"/api/(skip|program/end|play-url|voice|station|media/play|sources/[^/]+/[^/]+/play-latest|spots/[^/]+/fire"
                        r"|history/\d+/(play-next|save)|quiet|queue/order|media|images|video/resolve|station/logo|stations/picked|podcast/resolve|feeds/check"
                        r"|programs/title-check|check|devices/pair|import|me/password|logout)"),
@@ -139,8 +142,9 @@ async def basic_auth(request: Request, call_next):
 
 
 def credentials_ok(user: str, pw: str) -> bool:
-    """The admin's user name and password from .env."""
-    return secrets.compare_digest(user.encode(), UI_USER.encode()) and secrets.compare_digest(pw.encode(), UI_PASSWORD.encode())
+    """The admin's user name and password (from .env, or the one the admin set since)."""
+    name_ok = secrets.compare_digest(user.encode(), UI_USER.encode())
+    return name_ok and users.admin_password_ok(pw, UI_PASSWORD)
 
 
 def login_access(name: str, pw: str) -> Access | None:
@@ -940,8 +944,8 @@ async def history_audio(entry_id: int, request: Request):
 
 @app.get("/api/ram")
 async def ram():
-    """The radio's RAM disk for the admin: size, use, and each kept program in it with its
-    size, biggest first. 404 without a RAM disk."""
+    """The radio's RAM disk: size, use, and each kept program in it with its size, biggest
+    first (for a user only those of channels they can listen to). 404 without a RAM disk."""
     usage = ram_usage()
     if not usage:
         raise HTTPException(404, "the radio has no RAM disk")
@@ -954,6 +958,10 @@ async def ram():
     owners = state.replay_owners([p for p, _ in files])
     shows = [{"title": owners.get(p, {}).get("title") or Path(p).stem, "channel": owners.get(p, {}).get("channel") or "",
               "since": owners.get(p, {}).get("ts"), "size": size} for p, size in files]
+    a = acc()
+    if not a.admin:
+        mine = {c.id for c in store.config.channels if a.can_listen(c)}
+        shows = [s for s in shows if s["channel"] in mine]
     return {**usage, "shows": sorted(shows, key=lambda s: -s["size"])}
 
 
@@ -983,10 +991,14 @@ async def invidious_health() -> dict:
 
 @app.get("/api/health")
 async def health():
-    """For the admin's overview in the apps: is the stream on air, does Invidious answer,
-    how much room is left on the data disk, and how many listen to each channel."""
+    """For the overview in the apps: is the stream on air, does Invidious answer, how much
+    room is left on the data disk, and how many listen to each channel (for a user only
+    the channels they can listen to)."""
     cfg = store.config
+    a = acc()
     states = [engine.state(c.id) for c in cfg.channels]
+    mine = [(c, cs) for c, cs in zip(cfg.channels, states) if a.admin or a.can_listen(c)]
+    mounts = {c.mount for c, _ in mine}
     on_air = sum(1 for cs in states if cs.liq)
     disk = shutil.disk_usage(CONFIG_PATH.parent)
     icecast = any(cs.listeners is not None for cs in states)
@@ -997,10 +1009,10 @@ async def health():
         "invidious": await invidious_health(),
         "disk": {"ok": disk.free >= DISK_LOW, "free": disk.free, "size": disk.total},
         # Streams that are on but Icecast doesn't have (ICECAST_MAX_SOURCES too low, say).
-        "missing_streams": engine.missing_streams,
+        "missing_streams": [m for m in engine.missing_streams if m.rsplit(".", 1)[0] in mounts],
         # `phones`: apps playing a clip of the channel again, not on the stream.
         "listeners": [{"channel": c.id, "name": c.name, "listeners": cs.listeners, "phones": again.get(c.id, 0)}
-                      for c, cs in zip(cfg.channels, states)],
+                      for c, cs in mine],
     }
 
 
@@ -1380,22 +1392,43 @@ class PasswordChange(BaseModel):
     new: str
 
 
+def password_login(a: Access) -> str | None:
+    """Whose password this person may change: a user id, "" for the admin, or None
+    (no login is set up, or a phone the admin paired without a user)."""
+    if not UI_PASSWORD:
+        return None
+    if a.user is not None:
+        return a.user.id
+    return "" if a.admin else None
+
+
 @app.post("/api/me/password")
 async def change_password(body: PasswordChange, request: Request):
-    """A user changes their own password (the admin's is UI_PASSWORD in .env).
-    Other browsers where they are logged in are logged out."""
+    """Change your own password, as a user or as the admin (then it wins over UI_PASSWORD
+    in .env until that is changed). Other browsers where you are logged in are logged
+    out; paired apps keep working."""
     a = acc()
-    if a.user is None:
-        raise HTTPException(409, "the admin's password is UI_PASSWORD in .env")
-    if users.check(a.user.name, body.old) is None:
-        raise HTTPException(403, "the current password is wrong")
+    uid = password_login(a)
+    if uid is None:
+        raise HTTPException(409, "no login is set up (UI_PASSWORD in .env)" if not UI_PASSWORD
+                            else "this phone has no login of its own")
     try:
-        await run_in_threadpool(users.update, a.user.id, body.new)
+        if uid:
+            if users.check(a.user.name, body.old) is None:
+                raise HTTPException(403, "the current password is wrong")
+            await run_in_threadpool(users.update, uid, body.new)
+        else:
+            if not await run_in_threadpool(credentials_ok, UI_USER, body.old):
+                raise HTTPException(403, "the current password is wrong")
+            await run_in_threadpool(users.set_admin_password, body.new, UI_PASSWORD)
     except ValueError as e:
         raise HTTPException(422, str(e))
-    await run_in_threadpool(sessions.end_user, a.user.id)
-    token = await run_in_threadpool(sessions.create, a.user.id)
+    log.info("password changed for %s", a.user.name if uid else UI_USER)
+    await run_in_threadpool(sessions.end_user, uid)
     resp = JSONResponse({"ok": True})
+    if a.device is not None:  # an app: its key stays valid, no cookie needed
+        return resp
+    token = await run_in_threadpool(sessions.create, uid)
     https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "") == "https"
     resp.set_cookie(COOKIE, token, max_age=DAYS * 86400, httponly=True, samesite="lax", secure=https, path="/")
     return resp
@@ -1417,10 +1450,32 @@ def _channels_of(a: Access) -> list[dict]:
             for c in store.config.channels if a.can_listen(c)]
 
 
+def _devices_of(a: Access) -> list:
+    """The devices this person may see and manage: all for the admin, else their own.
+    A phone the admin paired without a user only sees itself."""
+    if a.admin:
+        return devices.list(None)
+    if a.user is None:
+        return [d for d in devices.list("") if a.device and d.id == a.device.id]
+    return devices.list(a.uid)
+
+
+def _device_channels(a: Access, ids: list[str]) -> list[str]:
+    """A phone limited to some channels can't hand more out, to a new phone or itself."""
+    lim = a.device.channels if a.device and not a.admin else []
+    if not lim:
+        return ids
+    if not ids:
+        return list(lim)
+    if extra := [i for i in ids if i not in lim]:
+        raise HTTPException(422, f"this phone can't give out: {', '.join(extra)}")
+    return ids
+
+
 def _own_device(did: str):
     """A device the caller may manage: any for the admin, else their own."""
     a = acc()
-    dev = next((d for d in devices.list(None if a.admin else a.uid) if d.id == did), None)
+    dev = next((d for d in _devices_of(a) if d.id == did), None)
     if dev is None:
         raise HTTPException(404, "unknown device")
     return dev
@@ -1431,12 +1486,16 @@ async def list_devices():
     """Paired apps and pairing codes still waiting to be scanned (a user's own only)."""
     a = acc()
     mine = None if a.admin else a.uid
+    pending = [] if not a.admin and a.user is None else devices.pending(mine)
     return {
-        "devices": [d.public() for d in await run_in_threadpool(devices.list, mine)],
+        "devices": [d.public() for d in await run_in_threadpool(_devices_of, a)],
         "pending": [{"code": p.code, "name": p.name, "role": p.role, "channels": p.channels, "expires": p.expires,
                      "user_id": p.user_id}
-                    for p in devices.pending(mine)],
+                    for p in pending],
         "password_set": bool(UI_PASSWORD),
+        # Users pair their own phones; a phone the admin paired without a user can't.
+        "can_pair": a.admin or a.user is not None,
+        "this_device": a.device.id if a.device else None,
     }
 
 
@@ -1453,8 +1512,11 @@ async def start_pairing(body: PairStart, request: Request):
     """A one-time code (valid 10 minutes) and a QR code for the app to scan.
     A user's devices are always members that act as that user."""
     a = acc()
+    if not a.admin and a.user is None:
+        raise HTTPException(403, "only the admin can pair phones for this radio")
     owner = body.user if a.admin else a.uid
     role = body.role if a.admin else "member"
+    body.channels = _device_channels(a, body.channels)
     owner_user = users.get(owner) if owner else None
     if owner and owner_user is None:
         raise HTTPException(422, "unknown user")
@@ -1474,7 +1536,7 @@ async def start_pairing(body: PairStart, request: Request):
 @app.delete("/api/devices/pair/{code}")
 async def cancel_pairing(code: str):
     a = acc()
-    if a.admin or any(p.code == devices._norm(code) for p in devices.pending(a.uid)):
+    if a.admin or (a.user is not None and any(p.code == devices._norm(code) for p in devices.pending(a.uid))):
         devices.cancel_pairing(code)
     return {"ok": True}
 
@@ -1493,6 +1555,8 @@ async def edit_device(did: str, body: DeviceEdit):
     if body.role == "admin" and (not a.admin or (owner and not owner.admin)):
         raise HTTPException(422, "this device can't be an admin device")
     check = Access(admin=owner.admin, user=owner) if owner else a
+    if body.channels is not None:
+        body.channels = _device_channels(a, body.channels)
     try:
         dev = await run_in_threadpool(devices.update, did, body.name, body.role,
                                       None if body.channels is None else _check_channels(body.channels, check))
@@ -1563,5 +1627,7 @@ async def me(request: Request):
             "device": dev.public() if dev else None, "role": role, "login": bool(UI_PASSWORD),
             "admin": a.admin, "user": {**a.user.public(), "folder": a.user.folder} if a.user else None,
             "admin_name": UI_USER,
+            # Whether "Change password" applies: users and the admin, once a login is set up.
+            "can_change_password": password_login(a) is not None,
             "station_name": store.config.settings.station_name,
             "channels": chans, "streams": {c["id"]: stream_urls(request, c["id"]) for c in chans}}

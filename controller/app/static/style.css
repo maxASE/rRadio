@@ -548,3 +548,4 @@ body.has-pbar .toast { bottom: 84px; }
 .send-link .row.nowrap input { width: auto; flex: 1 1 0; min-width: 0; }
 .stile-actions { flex-wrap: nowrap; }
 .pb-title, .pb-sub { max-width: 520px; }
+#account-card[hidden] { display: none; }
