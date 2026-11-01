@@ -190,10 +190,12 @@ class Store:
                  "duration": replay_field(r[7], "duration"), "saved": r[8] or None} for r in rows]
 
     def history(self, limit: int = 30, channel: str | None = None) -> list[dict]:
-        """Entries for one channel plus the ones that concern all channels."""
+        """Entries for one channel plus the ones that concern all channels. Video and
+        podcast entries without a channel (skipped before any channel got them, from older
+        versions) stay out: they may come from someone else's private sources."""
         with self._lock:
             rows = self._db.execute(
-                self._ENTRY + " WHERE ? IS NULL OR channel IN (?, '') ORDER BY id DESC LIMIT ?",
+                self._ENTRY + " WHERE ? IS NULL OR (channel = ? OR (channel = '' AND kind NOT IN ('video', 'podcast'))) ORDER BY id DESC LIMIT ?",
                 (channel, channel, limit),
             ).fetchall()
         return self._entries(rows)
@@ -202,7 +204,7 @@ class Store:
         """The channel's entries saved for later, the last saved first."""
         with self._lock:
             rows = self._db.execute(
-                self._ENTRY + " WHERE saved > 0 AND channel IN (?, '') ORDER BY saved DESC", (channel,)
+                self._ENTRY + " WHERE saved > 0 AND (channel = ? OR (channel = '' AND kind NOT IN ('video', 'podcast'))) ORDER BY saved DESC", (channel,)
             ).fetchall()
         return self._entries(rows)
 
@@ -212,7 +214,7 @@ class Store:
         like = "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         with self._lock:
             rows = self._db.execute(
-                self._ENTRY + " WHERE channel IN (?, '') AND (title LIKE ? ESCAPE '\\' OR source LIKE ? ESCAPE '\\')"
+                self._ENTRY + " WHERE (channel = ? OR (channel = '' AND kind NOT IN ('video', 'podcast'))) AND (title LIKE ? ESCAPE '\\' OR source LIKE ? ESCAPE '\\')"
                 " AND NOT (kind = 'program' AND status = 'ended') ORDER BY id DESC LIMIT ?",
                 (channel, like, like, limit),
             ).fetchall()

@@ -119,9 +119,9 @@ def passes_filters(f: Filters, title: str, duration: float | None) -> str | None
     """Return a reason string if the item should be skipped."""
     if duration is not None:
         if f.min_minutes and duration < f.min_minutes * 60:
-            return "too short"
+            return f"too short ({round(duration / 60)} min, the least is {f.min_minutes})"
         if f.max_minutes and duration > f.max_minutes * 60:
-            return "too long"
+            return f"too long ({round(duration / 60)} min, the most is {f.max_minutes})"
     if f.include and not re.search(f.include, title, re.I):
         return "does not match include filter"
     if f.exclude and re.search(f.exclude, title, re.I):

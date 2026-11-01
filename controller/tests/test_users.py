@@ -256,3 +256,23 @@ def test_admin_changes_own_password(app_main, anon):
         app_main.UI_PASSWORD = "secret-pw"
         app_main.users.set_admin_password("secret-pw", "secret-pw")
     assert TestClient(app_main.app, headers=BASIC).get("/api/me").status_code == 200
+
+
+def test_skipped_clips_show_only_on_channels_that_take_their_source(admin, app_main):
+    """A skipped clip of the admin's private video channel must not show on a user's channel."""
+    from types import SimpleNamespace
+    u, c = make_user(admin, app_main)
+    ch = add_channel(c, "Quiet study", f"quiet-{u['name']}")
+    admin_ch = admin.get("/api/config").json()["channels"][0]["id"]
+    src = SimpleNamespace(id="vid-admin-only", owner="")
+    cfg = app_main.store.config
+    wants = [x for x in cfg.channels if x.wants(src)]
+    app_main.engine._log_source("video", src, "Admin talk", "Secret interview", "skipped", "too long (95 min, the most is 90)")
+    app_main.state.add_history("video", "Old version", "Old leak", "skipped", "too long")  # no channel, as before
+    titles = [e["title"] for e in c.get(f"/api/status?channel={ch['id']}").json()["history"]]
+    assert "Secret interview" not in titles and "Old leak" not in titles
+    hist = app_main.state.history(channel=admin_ch)
+    if any(x.id == admin_ch for x in wants):
+        assert any(e["title"] == "Secret interview" for e in hist)
+    # Nobody takes it: only the overall history has it.
+    assert any(e["title"] == "Secret interview" for e in app_main.state.history())

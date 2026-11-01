@@ -685,13 +685,21 @@ class Engine:
             if not reason and not any(c.wants(src) for c in self.config.channels):
                 reason = "no channel plays this source"
             if reason:
-                self.store.add_history(kind, src.name, it.title, "skipped", reason)
+                self._log_source(kind, src, src.name, it.title, "skipped", reason)
                 continue
             if it.live:
                 self._defer(it, it.live)
-                self.store.add_history(kind, src.name, it.title, "waiting", WAIT_NOTE[it.live])
+                self._log_source(kind, src, src.name, it.title, "waiting", WAIT_NOTE[it.live])
                 continue
             self.enqueue_all(it, src)
+
+    def _log_source(self, kind: str, src, name: str, title: str, status: str, detail: str = "") -> None:
+        """A history entry for a clip that no channel's queue holds (skipped, waiting): on
+        every channel that takes cut-ins from its source, so it shows only there and never
+        on other people's channels. Without such a channel it goes to the overall history."""
+        chans = [c.id for c in self.config.channels if src is not None and c.wants(src)] or [""]
+        for cid in chans:
+            self.store.add_history(kind, name, title, status, detail, cid)
 
     # --- Waiting to play -------------------------------------------------------
 
@@ -705,7 +713,8 @@ class Engine:
         if self.store.wait_drop(key):
             self._waiting_rev += 1
         if status:
-            self.store.add_history("video", d["source_name"], d["title"], status, detail)
+            self._log_source("video", self.config.source("video", d["source_id"]), d["source_name"], d["title"],
+                             status, detail)
 
     def _defer(self, it: Item, reason: str) -> None:
         """Put a video clip on the waiting list instead of the queue."""
@@ -838,7 +847,8 @@ class Engine:
                 retry = dataclasses.replace(first, wait_tries=first.wait_tries + (1 if first.wait_since else 0))
                 self._defer(retry, f"download failed: {err}")
                 if not first.wait_since:
-                    self.store.add_history("video", first.source_name, first.title, "waiting", "download failed, trying again later")
+                    self._log_source("video", src, first.source_name, first.title, "waiting",
+                                     "download failed, trying again later")
                 return
             for it in group:
                 it.state, it.error = "failed", err
