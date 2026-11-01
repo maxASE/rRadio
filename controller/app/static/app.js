@@ -2680,6 +2680,8 @@ api("/api/me")
     $("#btn-logout").hidden = !me.login;
     document.body.classList.toggle("is-user", !me.admin);
     $$("[data-user-name]").forEach((e) => (e.textContent = me.user ? me.user.name : ""));
+    $$("[data-admin-name]").forEach((e) => (e.textContent = me.admin_name || "admin"));
+    $("#account-card").hidden = !me.can_change_password;
     if (me.admin && me.login) loadUsers();
     return loadConfig();
   })

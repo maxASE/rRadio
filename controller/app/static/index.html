@@ -383,9 +383,10 @@
     </section>
 
     <section id="view-settings" class="view">
-      <div class="card user-only" id="account-card">
+      <div class="card" id="account-card" hidden>
         <h2>Your account</h2>
-        <p class="muted">Logged in as <strong data-user-name></strong>. You can make channels of your own; switch one to public under its Channel settings so everyone else can listen to it too.</p>
+        <p class="muted user-only">Logged in as <strong data-user-name></strong>. You can make channels of your own; switch one to public under its Channel settings so everyone else can listen to it too.</p>
+        <p class="muted admin-only">Logged in as the admin, <strong data-admin-name></strong>. A new password here wins over <code>UI_PASSWORD</code> in <code>.env</code>; if you forget it, change <code>UI_PASSWORD</code> in <code>.env</code> and restart, and that one works again.</p>
         <form id="form-password" class="stack">
           <label class="field">Current password <input name="old" type="password" autocomplete="current-password" required></label>
           <label class="field">New password <input name="new" type="password" autocomplete="new-password" minlength="8" required></label>

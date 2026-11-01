@@ -194,3 +194,65 @@ def test_every_source_becomes_ticks(app_main):
     c, d = cfg.channels
     assert not c.all_sources and c.sources == ["a1", "p1"]  # the owner's sources only
     assert not d.all_sources and d.sources == ["u1"]
+
+
+
+def pair_as(c, anon, **body):
+    p = c.post("/api/devices/pair", json={"name": "Phone", **body})
+    assert p.status_code == 200, p.text
+    d = anon.post("/api/pair", json={"code": p.json()["code"]}).json()
+    return d, {"Authorization": f"Bearer {d['token']}"}
+
+
+def test_user_settings_tab(admin, anon, app_main):
+    """A user's phone gets the Settings tab: health, RAM, streams and its own devices."""
+    u, c = make_user(admin, app_main)
+    pw = "pw-" + u["name"] + "-long"
+    d, auth = pair_as(c, anon)
+    for path in ("/api/health", "/api/streams", "/api/devices"):
+        assert anon.get(path, headers=auth).status_code == 200, path
+    assert anon.get("/api/ram", headers=auth).status_code in (200, 404)
+    devs = anon.get("/api/devices", headers=auth).json()
+    assert devs["devices"] and all(x["user_id"] == u["id"] for x in devs["devices"]) and devs["can_pair"]
+    assert anon.post("/api/users", headers=auth, json={"name": "nope", "password": "12345678"}).status_code == 403
+    assert anon.get("/api/me", headers=auth).json()["can_change_password"] is True
+    # The phone changes the user's password; its key keeps working.
+    r = anon.post("/api/me/password", headers=auth, json={"old": pw, "new": "phone-changed"})
+    assert r.status_code == 200 and "set-cookie" not in r.headers
+    assert anon.post("/api/login", json={"username": u["name"], "password": "phone-changed"}).status_code == 200
+    assert anon.get("/api/me", headers=auth).status_code == 200
+
+
+def test_limited_phone_cannot_hand_out_more_channels(admin, anon, app_main):
+    u, c = make_user(admin, app_main)
+    a = add_channel(c, "Lim A", f"lima-{u['name']}")
+    b = add_channel(c, "Lim B", f"limb-{u['name']}")
+    d, auth = pair_as(c, anon, channels=[a["id"]])
+    did = d["device"]["id"]
+    assert anon.post("/api/devices/pair", headers=auth, json={"channels": [b["id"]]}).status_code == 422
+    assert anon.patch(f"/api/devices/{did}", headers=auth, json={"channels": [b["id"]]}).status_code == 422
+    assert anon.patch(f"/api/devices/{did}", headers=auth, json={"channels": []}).json()["channels"] == [a["id"]]
+    p = anon.post("/api/devices/pair", headers=auth, json={})
+    assert p.status_code == 200
+    pend = c.get("/api/devices").json()["pending"]
+    assert next(x for x in pend if x["code"] == p.json()["code"])["channels"] == [a["id"]]
+
+
+def test_admin_changes_own_password(app_main, anon):
+    from conftest import BASIC
+    a = TestClient(app_main.app, headers=BASIC)
+    assert a.get("/api/me").json()["can_change_password"] is True
+    assert a.post("/api/me/password", json={"old": "wrong", "new": "new-admin-pw"}).status_code == 403
+    assert a.post("/api/me/password", json={"old": "secret-pw", "new": "short"}).status_code == 422
+    try:
+        assert a.post("/api/me/password", json={"old": "secret-pw", "new": "new-admin-pw"}).status_code == 200
+        assert anon.post("/api/login", json={"username": "admin", "password": "secret-pw"}).status_code == 401
+        assert anon.post("/api/login", json={"username": "admin", "password": "new-admin-pw"}).status_code == 200
+        # Changing UI_PASSWORD in .env resets it: the .env one works again.
+        app_main.UI_PASSWORD = "reset-pw-env"
+        assert anon.post("/api/login", json={"username": "admin", "password": "new-admin-pw"}).status_code == 401
+        assert anon.post("/api/login", json={"username": "admin", "password": "reset-pw-env"}).status_code == 200
+    finally:
+        app_main.UI_PASSWORD = "secret-pw"
+        app_main.users.set_admin_password("secret-pw", "secret-pw")
+    assert TestClient(app_main.app, headers=BASIC).get("/api/me").status_code == 200

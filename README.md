@@ -302,6 +302,10 @@ player at a stream: `http://<server>:8080/listen.m3u?fmt=aac`. Add
   address, log-in pauses for five minutes. Scripts and dashboards can still send
   the same user and password as HTTP Basic auth. The streams and playlist files
   stay open so players don't need a login.
+- **Changing the admin password:** under **Settings › Your account** (or in the
+  app) the admin can set a new password. It is kept hashed in `state.db` and
+  wins over `UI_PASSWORD` until you change `UI_PASSWORD` in `.env`, which is how
+  a forgotten one is reset. Dashboards that send Basic auth need the new one.
 
 ## Users and public channels
 
@@ -492,6 +496,11 @@ Roles: **Everything** can do anything the web UI can. **Listen and control**
 can read the status and, on its channels only, skip, end a program, remove
 from the queue, cut in a link, own media, a spot or the latest episode, and
 change the station. It can't see or change settings, sources or the schedule.
+For the app's **Settings** tab it can also read the radio's health, RAM, streams
+and listeners (only for its channels), see its own devices and, if a user paired
+it, pair a new phone for that user (with no more channels than it has itself)
+and change that user's password. Which formats the server makes and creating
+users stay with the admin.
 
 Device limits only matter when `UI_PASSWORD` is set; without it, anyone on
 your network can use the web UI and its API anyway.

@@ -1,7 +1,9 @@
 """User accounts: people who log in to the web UI and run channels of their own.
 
-The admin is the UI_USERNAME/UI_PASSWORD login from .env (it is not stored
-here); the admin adds users under Settings › Users. A user owns the channels
+The admin is the UI_USERNAME/UI_PASSWORD login from .env; the admin adds users
+under Settings › Users. The admin may change their password in the UI or the
+app: the new one is kept here (hashed) and wins over .env until UI_PASSWORD in
+.env is changed, which is how a forgotten one is reset. A user owns the channels
 they create and can make one public, so that everyone else can listen to it
 and see what is on, but not change it. Users with the role "admin" can do
 everything the admin can.
@@ -73,6 +75,31 @@ class Users:
                     created REAL NOT NULL
                 )"""
             )
+
+        with self._lock, self._db:
+            # The admin's own password, set in the UI; `env_hash` is UI_PASSWORD as it was then.
+            self._db.execute(
+                """CREATE TABLE IF NOT EXISTS admin_login (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    pw_hash TEXT NOT NULL,
+                    env_hash TEXT NOT NULL
+                )"""
+            )
+
+    def admin_password_ok(self, pw: str, env_pw: str) -> bool:
+        """Whether `pw` is the admin's password: the one set in the UI, as long as
+        UI_PASSWORD in .env is still what it was then, else UI_PASSWORD itself."""
+        with self._lock:
+            r = self._db.execute("SELECT pw_hash, env_hash FROM admin_login WHERE id=1").fetchone()
+        if r and check_password(env_pw, r[1]):
+            return check_password(pw, r[0])
+        return secrets.compare_digest(pw.encode(), env_pw.encode())
+
+    def set_admin_password(self, pw: str, env_pw: str) -> None:
+        pw_hash = self._password(pw)
+        with self._lock, self._db:
+            self._db.execute("INSERT OR REPLACE INTO admin_login (id, pw_hash, env_hash) VALUES (1, ?, ?)",
+                             (pw_hash, hash_password(env_pw)))
 
     @staticmethod
     def _row(r) -> User:

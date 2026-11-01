@@ -32,7 +32,11 @@ def test_member_is_limited_to_its_channel(admin, anon):
     main_id = admin.get("/api/config").json()["channels"][0]["id"]
     assert anon.get(f"/api/status?channel={main_id}", headers=auth).status_code == 403
     assert anon.get("/api/config", headers=auth).status_code == 403
-    assert anon.get("/api/devices", headers=auth).status_code == 403
+    # Its own Settings tab: only itself under Devices, and no pairing (no user behind it).
+    devs = anon.get("/api/devices", headers=auth).json()
+    assert [x["id"] for x in devs["devices"]] == [d["device"]["id"]] and devs["can_pair"] is False
+    assert anon.post("/api/devices/pair", headers=auth, json={}).status_code == 403
+    assert anon.put("/api/streams", headers=auth, json={"on": ["mp3"]}).status_code == 403
 
 
 @pytest.mark.parametrize("role", ["admin"])
@@ -89,7 +93,7 @@ def test_member_quiets_its_channel_until_morning(admin, anon, app_main):
     assert anon.post("/api/quiet", headers=auth, json={"channel": "kid", "until": 5}).json()["quiet_until"] is None
 
 
-def test_health_is_for_admins_and_checks_invidious_once_a_minute(admin, anon, app_main, monkeypatch):
+def test_health_checks_invidious_once_a_minute(admin, anon, app_main, monkeypatch):
     calls = []
 
     async def get(self, url, **kw):
@@ -106,8 +110,10 @@ def test_health_is_for_admins_and_checks_invidious_once_a_minute(admin, anon, ap
     admin.get("/api/health")
     assert len(calls) == 1 and calls[0].endswith("/api/v1/stats")
 
-    d = pair(admin, anon, role="member")
-    assert anon.get("/api/health", headers={"Authorization": f"Bearer {d['token']}"}).status_code == 403
+    # A phone limited to one channel sees only that channel's listeners.
+    d = pair(admin, anon, role="member", channels=["kid"])
+    h = anon.get("/api/health", headers={"Authorization": f"Bearer {d['token']}"}).json()
+    assert [x["channel"] for x in h["listeners"]] == ["kid"]
 
 
 def test_admin_switches_streams_with_data_per_hour(admin, app_main):
