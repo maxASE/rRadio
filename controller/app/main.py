@@ -1,4 +1,4 @@
-"""Web UI and JSON API for Pirate Radio."""
+"""Web UI and JSON API for rRadio."""
 
 from __future__ import annotations
 

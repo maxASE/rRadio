@@ -1,4 +1,4 @@
-# Pirate Radio audio engine.
+# rRadio audio engine.
 #
 # Every channel is its own little radio: a base (a relayed radio stream, or
 # music the controller pushes, e.g. from Navidrome) under a cut-in queue.
@@ -25,7 +25,7 @@ api_port = int_of_string(env("LIQ_API_PORT", "8005"))
 ice_host = env("ICECAST_HOST", "icecast")
 ice_port = int_of_string(env("ICECAST_PORT", "8000"))
 ice_pass = env("ICECAST_SOURCE_PASSWORD", "hackme")
-station_name = env("STATION_NAME", "Pirate Radio")
+station_name = env("STATION_NAME", "rRadio")
 fade_time = float_of_string(env("FADE_SECONDS", "1.5"))
 cutin_gain = float_of_string(env("CUTIN_GAIN_DB", "0."))
 enabled_formats = ref(string.split(separator=",", env("STREAMS", "mp3")))

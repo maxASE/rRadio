@@ -236,7 +236,7 @@ SECRET_MASK = "********"
 
 
 class Settings(BaseModel):
-    station_name: str = "Pirate Radio"
+    station_name: str = "rRadio"
     timezone: str = os.environ.get("TZ", "UTC") or "UTC"
     invidious_url: str = os.environ.get("INVIDIOUS_URL", "http://invidious:3000")
     poll_minutes: float = 10
@@ -340,7 +340,7 @@ def _migrate(data: dict) -> dict:
     """Configs from before channels kept one channel's lists at the top level."""
     old = {k: data.pop(k) for k in ("stations", "current_station", "programs", "spots") if k in data}
     if not data.get("channels"):
-        name = (data.get("settings") or {}).get("station_name") or "Pirate Radio"
+        name = (data.get("settings") or {}).get("station_name") or "rRadio"
         data["channels"] = [{"id": "main", "name": name, "mount": "radio", **old}]
     return data
 
@@ -454,7 +454,7 @@ class ConfigStore:
     def _write(self, cfg: Config) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        header = "# Pirate Radio config. Edited by the web UI; hand edits are fine too.\n"
+        header = "# rRadio config. Edited by the web UI; hand edits are fine too.\n"
         tmp.write_text(header + yaml.safe_dump(dump(cfg), sort_keys=False, allow_unicode=True))
         tmp.replace(self.path)
         self._mtime = self.path.stat().st_mtime

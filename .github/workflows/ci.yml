@@ -50,7 +50,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/pirate-radio-controller
+          images: ghcr.io/${{ github.repository_owner }}/rradio-controller
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}

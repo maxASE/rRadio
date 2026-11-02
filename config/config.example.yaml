@@ -1,9 +1,9 @@
-# Pirate Radio config example. The web UI writes this file for you
+# rRadio config example. The web UI writes this file for you
 # (/data/config.yaml in the radio-data volume); hand edits are picked up
 # automatically. IDs are generated when missing.
 
 settings:
-  station_name: Pirate Radio     # name of the web UI
+  station_name: rRadio           # name of the web UI
   timezone: Europe/Berlin        # used for programs and spots
   invidious_url: http://host.docker.internal:3000
   poll_minutes: 10               # how often to look for new videos and episodes
@@ -20,7 +20,7 @@ settings:
 # Each channel is its own stream at /<mount>.mp3 (and .aac/.opus/.aac48/.aac192).
 channels:
   - id: main
-    name: Pirate Radio
+    name: rRadio
     mount: radio
     # What plays when nothing else is on; current_station picks one.
     stations:

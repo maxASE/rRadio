@@ -56,7 +56,7 @@ def cache_dir(in_ram: bool) -> Path:
         return RAM_CACHE_DIR
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     return CACHE_DIR
-USER_AGENT = "PirateRadio/1.0 (+https://github.com/)"
+USER_AGENT = "rRadio/1.0 (+https://github.com/maxASE/rRadio)"
 _VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 
