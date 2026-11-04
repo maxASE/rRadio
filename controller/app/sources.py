@@ -162,6 +162,7 @@ async def close_shared() -> None:
 
 # Channel avatars by channel id; they rarely change, so one lookup per run.
 _avatars: dict[str, str] = {}
+_avatar_failed: dict[str, float] = {}
 
 
 class Invidious:
@@ -190,11 +191,17 @@ class Invidious:
 
     async def channel_avatar(self, ucid: str) -> str:
         if ucid not in _avatars:
+            # A lookup that failed isn't tried again on every poll of the channel (each one
+            # a slow whole-channel request to Invidious), only after ten minutes.
+            if time.time() - _avatar_failed.get(ucid, 0) < 600:
+                return ""
             try:
                 ch = await self._get(f"/api/v1/channels/{ucid}")
                 _avatars[ucid] = self.avatar(ch.get("authorThumbnails", []))
+                _avatar_failed.pop(ucid, None)
             except Exception as e:
                 log.info("avatar for %s failed: %s", ucid, e)
+                _avatar_failed[ucid] = time.time()
                 return ""
         return _avatars[ucid]
 

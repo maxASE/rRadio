@@ -91,3 +91,43 @@ def test_station_search_endpoint(admin, app_main, monkeypatch):
     assert admin.get("/api/stations/search?q=P3").json() == [{"uuid": "u", "name": "P3"}]
     assert admin.get("/api/stations/search").status_code == 400
     assert admin.post("/api/stations/picked", json={"uuid": "nope"}).status_code == 204
+
+
+def test_pictures_are_fetched_once_and_kept_on_disk(monkeypatch, tmp_path):
+    calls = []
+
+    async def handler(req):
+        calls.append(str(req.url))
+        await asyncio.sleep(0.05)
+        return httpx.Response(200, content=b"PNGDATA", headers={"content-type": "image/png"})
+
+    mock(monkeypatch, art, handler)
+
+    async def run():
+        cache = art.ArtCache(disk=tmp_path)
+        key = cache.path("https://inv.example/ggpht/avatar").rsplit("/", 1)[-1]  # also starts fetching ahead
+        # Many clients at once (every tab, the lists, the web page): one fetch.
+        got = await asyncio.gather(*(cache.get(key) for _ in range(5)))
+        assert all(g == (b"PNGDATA", "image/png") for g in got)
+        assert len(calls) == 1
+        # After a restart the picture comes from disk, not from the remote server again.
+        again = art.ArtCache(disk=tmp_path)
+        assert await again.get(key) == (b"PNGDATA", "image/png")
+        assert len(calls) == 1
+
+    asyncio.run(run())
+
+
+def test_a_picture_that_failed_once_comes_back_after_a_minute(monkeypatch, tmp_path):
+    mock(monkeypatch, art, lambda req: httpx.Response(504))
+
+    async def run():
+        cache = art.ArtCache(disk=tmp_path)
+        url = "https://inv.example/ggpht/slow"
+        key = cache.path(url).rsplit("/", 1)[-1]
+        assert await cache.get(key) is None
+        assert cache.path(url) is None  # left out for a moment
+        cache.failed_at[key] -= 61
+        assert cache.path(url) == f"/api/art/{key}"  # one failure: back after a minute
+
+    asyncio.run(run())

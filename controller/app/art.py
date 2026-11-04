@@ -3,6 +3,7 @@ browser only ever talks to rRadio (never to the video site or a station's server
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -12,6 +13,8 @@ from collections import OrderedDict
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit, urlunsplit
+
+from starlette.concurrency import run_in_threadpool
 
 from .sources import client
 
@@ -52,18 +55,30 @@ def art_key(url: str) -> str:
     return hashlib.sha1(url.encode()).hexdigest()[:16]
 
 
+# Pictures fetched once are kept on disk too, so a restart (or a busy day pushing them out
+# of memory) doesn't send every client's request back to the video site or a station's
+# server, which made channel pictures slow to show up again and again.
+ART_CACHE_DIR = Path(os.environ.get("ART_CACHE_DIR", Path(os.environ.get("CACHE_DIR", "/data/cache")) / "art"))
+ART_DISK_FILES = 2000
+
+
 class ArtCache:
     """Hands out /api/art/<key> paths for URLs the engine chose, and serves them.
 
-    Only URLs registered here can be fetched, so this is no open proxy.
+    Only URLs registered here can be fetched, so this is no open proxy. A picture is fetched
+    once however many clients ask for it at the same time, kept in memory and on disk, and
+    fetched ahead as soon as its path is handed out, so the first phone to show it doesn't wait.
     """
 
-    def __init__(self, size: int = 64):
+    def __init__(self, size: int = 256, disk: Path | None = ART_CACHE_DIR):
         self.urls: OrderedDict[str, str] = OrderedDict()  # key -> remote URL
         self.images: OrderedDict[str, tuple[bytes, str] | None] = OrderedDict()  # key -> image, None if it failed
         self.failed_at: dict[str, float] = {}
+        self.failures: dict[str, int] = {}  # key -> failures in a row
         self.errors: dict[str, str] = {}  # key -> why it failed
+        self.loading: dict[str, asyncio.Task] = {}
         self.size = size
+        self.disk = disk
 
     def path(self, url: str) -> str | None:
         """The local path to show `url` at, or None if it failed recently."""
@@ -72,35 +87,109 @@ class ArtCache:
         if url.startswith(UPLOADED):
             return url
         key = art_key(url)
-        if key in self.failed_at and time.time() - self.failed_at[key] < 600:
+        if key in self.failed_at and time.time() - self.failed_at[key] < self._pause(key):
             return None
+        new = key not in self.urls
         self.urls[key] = url
         self.urls.move_to_end(key)
         while len(self.urls) > self.size * 4:
             self.urls.popitem(last=False)
+        if new and key not in self.images:
+            self._warm(key)
         return f"/api/art/{key}"
+
+    def _pause(self, key: str) -> float:
+        """How long a failed picture is left out: a minute after one failure (a slow answer
+        once shouldn't hide a channel's picture for long), ten after more."""
+        return 60 if self.failures.get(key, 0) <= 1 else 600
+
+    def _warm(self, key: str) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # not inside the server (tests, scripts)
+        if key not in self.loading:
+            self.loading[key] = loop.create_task(self._load(key))
+
+    def _disk_file(self, key: str) -> Path | None:
+        return self.disk / key if self.disk and re.fullmatch(r"[0-9a-f]{16}", key) else None
+
+    def _read_disk(self, key: str) -> tuple[bytes, str] | None:
+        f = self._disk_file(key)
+        if not f or not f.is_file():
+            return None
+        try:
+            data = f.read_bytes()
+            ctype, _, body = data.partition(b"\n")
+            os.utime(f)  # recently used: kept when old ones are cleared out
+            return body, ctype.decode()
+        except OSError:
+            return None
+
+    def _write_disk(self, key: str, image: tuple[bytes, str]) -> None:
+        f = self._disk_file(key)
+        if not f:
+            return
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_suffix(".tmp")
+            tmp.write_bytes(image[1].encode() + b"\n" + image[0])
+            tmp.replace(f)
+            files = list(f.parent.iterdir())
+            if len(files) > ART_DISK_FILES * 1.1:  # clear out the least recently used
+                files.sort(key=lambda p: p.stat().st_mtime)
+                for old in files[: len(files) - ART_DISK_FILES]:
+                    old.unlink(missing_ok=True)
+        except OSError as e:
+            log.info("picture cache on disk: %s", e)
+
+    def _remember(self, key: str, image: tuple[bytes, str]) -> None:
+        self.images[key] = image
+        self.images.move_to_end(key)
+        while len(self.images) > self.size:
+            self.images.popitem(last=False)
 
     async def get(self, key: str) -> tuple[bytes, str] | None:
         if key in self.images:
             self.images.move_to_end(key)
             return self.images[key]
-        url = self.urls.get(key)
-        if not url:
-            return None
+        task = self.loading.get(key)
+        if task is None:
+            if key not in self.urls:
+                f = self._disk_file(key)
+                if not f or not f.is_file():
+                    return None
+            task = self.loading[key] = asyncio.get_running_loop().create_task(self._load(key))
+        # Shielded: a client giving up doesn't cancel the fetch the others are waiting on.
+        return await asyncio.shield(task)
+
+    async def _load(self, key: str) -> tuple[bytes, str] | None:
         try:
-            async with client(15) as c:
-                image = await _fetch_image(c, url)
-        except Exception as e:
-            reason = str(e) or type(e).__name__
-            log.warning("picture %s failed: %s", url, reason)
-            self.failed_at[key] = time.time()
-            self.errors[key] = reason
-            return None
-        self.errors.pop(key, None)
-        self.images[key] = image
-        while len(self.images) > self.size:
-            self.images.popitem(last=False)
-        return image
+            image = await run_in_threadpool(self._read_disk, key)
+            if image:
+                self._remember(key, image)
+                return image
+            url = self.urls.get(key)
+            if not url:
+                return None
+            try:
+                async with client(15) as c:
+                    image = await _fetch_image(c, url)
+            except Exception as e:
+                reason = str(e) or type(e).__name__
+                log.warning("picture %s failed: %s", url, reason)
+                self.failed_at[key] = time.time()
+                self.failures[key] = self.failures.get(key, 0) + 1
+                self.errors[key] = reason
+                return None
+            self.errors.pop(key, None)
+            self.failures.pop(key, None)
+            self.failed_at.pop(key, None)
+            self._remember(key, image)
+            await run_in_threadpool(self._write_disk, key, image)
+            return image
+        finally:
+            self.loading.pop(key, None)
 
     def error(self, url: str) -> str | None:
         """Why the picture at `url` could not be fetched, if it failed lately."""
