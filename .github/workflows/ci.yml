@@ -14,6 +14,8 @@ permissions:
 # uses no GitHub Actions minutes on this private repository.
 jobs:
   check:
+    # Runs on the home server: never for pull requests from forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux]
     steps:
       - uses: actions/checkout@v4
