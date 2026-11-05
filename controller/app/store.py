@@ -164,13 +164,15 @@ class Store:
                 (time.time() - HISTORY_DAYS * 86400,),
             )
 
-    def drop_waiting_entries(self, kind: str, source: str, title: str) -> None:
+    def drop_waiting_entries(self, kind: str, source: str, title: str, video: str | None = None) -> None:
         """Removes the "waiting" entries of a clip that has stopped waiting (it plays now, or
-        was given up), so a live shows once in the lists, not again for each step. Saved
-        ones stay."""
+        was given up), so a live shows once in the lists, not again for each step: by its
+        video id (a live may be renamed while it runs), or by its title for older lines.
+        Saved ones stay."""
         with self._lock, self._db:
-            self._db.execute("DELETE FROM history WHERE kind = ? AND source = ? AND title = ? AND status = 'waiting'"
-                             " AND saved = 0", (kind, source, title))
+            self._db.execute("DELETE FROM history WHERE kind = ? AND status = 'waiting' AND saved = 0"
+                             " AND ((source = ? AND title = ?) OR (? IS NOT NULL AND replay = ?))",
+                             (kind, source, title, video, json.dumps({"video": video})))
 
     def _note_program_length(self, channel: str, until: int | None = None) -> None:
         """Writes the length of a kept program's recording into its "started" entry once the
