@@ -190,6 +190,8 @@ def test_review_code_pairs_again_and_again(app_main, anon, monkeypatch):
     for _ in range(2):
         r = anon.post("/api/pair", json={"code": "app-review-1", "device_name": "Reviewer"})
         assert r.status_code == 200, r.text
-        assert r.json()["device"]["role"] == "admin"
+        assert r.json()["device"]["role"] == "member"
+        auth = {"Authorization": f"Bearer {r.json()['token']}"}
+        assert anon.get("/api/config", headers=auth).status_code == 403
     monkeypatch.setattr(app_main.devices, "review_code", "")
     assert anon.post("/api/pair", json={"code": "APPREVIEW1"}).status_code == 404
