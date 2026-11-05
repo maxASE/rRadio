@@ -977,7 +977,11 @@ async def invidious_health() -> dict:
     at, last = _invidious_check
     if last and time.monotonic() - at < HEALTH_EVERY:
         return last
-    url = store.config.settings.invidious_url.rstrip("/") + "/api/v1/stats"
+    base = store.config.settings.invidious_url.strip()
+    if not base:
+        # No video source set up (a radio of stations and podcasts only): nothing to check.
+        return {"ok": True, "off": True}
+    url = base.rstrip("/") + "/api/v1/stats"
     started = time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=5) as c:
