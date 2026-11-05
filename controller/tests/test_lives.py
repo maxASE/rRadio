@@ -84,6 +84,11 @@ def test_live_waits_then_cuts_in(admin, app_main, monkeypatch):
     assert w["reason"] == "live"
     status = admin.get("/api/status").json()
     assert any(x["key"] == key and x["reason"] == "live" for x in status["waiting"])
+    waiting_entries = [h for h in eng.store.history(50) if h["title"] == f"Show {vid}" and h["status"] == "waiting"]
+    assert waiting_entries
+    # The live is renamed while it runs; its waiting line still goes later (found by video id).
+    with eng.store._lock, eng.store._db:
+        eng.store._db.execute("UPDATE history SET title = 'Renamed live' WHERE title = ?", (f"Show {vid}",))
 
     # Over, but still being processed: Invidious errors, so it keeps waiting with a gap.
     pages[f"/api/v1/videos/{vid}"] = video(vid, lengthSeconds=0)
@@ -100,8 +105,12 @@ def test_live_waits_then_cuts_in(admin, app_main, monkeypatch):
     queued = [i for i in eng.items if i.key == key]
     assert {i.channel for i in queued} == {c.id for c in app_main.engine.config.channels if c.wants(src)}
     assert all(i.duration == 1800 and not i.live for i in queued)
+    # Its "waiting" line goes: once it has played the list shows it once, not twice.
+    assert not any(h["title"] in (f"Show {vid}", "Renamed live") and h["status"] == "waiting"
+                   for h in eng.store.history(50))
     for i in queued:
-        eng._finish(i, "removed")
+        eng._finish(i, "played")
+    assert [h["status"] for h in eng.store.history(50) if h["title"] == f"Show {vid}"] == ["played"] * len(queued)
 
 
 def test_gives_up_after_the_wait_limit(admin, app_main, monkeypatch):

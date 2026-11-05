@@ -689,17 +689,20 @@ class Engine:
                 continue
             if it.live:
                 self._defer(it, it.live)
-                self._log_source(kind, src, src.name, it.title, "waiting", WAIT_NOTE[it.live])
+                # The video id travels with the line, so it can go once the live stops
+                # waiting, even if the live was renamed meanwhile.
+                self._log_source(kind, src, src.name, it.title, "waiting", WAIT_NOTE[it.live], {"video": it.media})
                 continue
             self.enqueue_all(it, src)
 
-    def _log_source(self, kind: str, src, name: str, title: str, status: str, detail: str = "") -> None:
+    def _log_source(self, kind: str, src, name: str, title: str, status: str, detail: str = "",
+                    replay: dict | None = None) -> None:
         """A history entry for a clip that no channel's queue holds (skipped, waiting): on
         every channel that takes cut-ins from its source, so it shows only there and never
         on other people's channels. Without such a channel it goes to the overall history."""
         chans = [c.id for c in self.config.channels if src is not None and c.wants(src)] or [""]
         for cid in chans:
-            self.store.add_history(kind, name, title, status, detail, cid)
+            self.store.add_history(kind, name, title, status, detail, cid, replay)
 
     # --- Waiting to play -------------------------------------------------------
 
@@ -712,6 +715,7 @@ class Engine:
     def _wait_drop(self, key: str, d: dict, status: str = "", detail: str = "") -> None:
         if self.store.wait_drop(key):
             self._waiting_rev += 1
+        self.store.drop_waiting_entries("video", d["source_name"], d["title"], d.get("media"))
         if status:
             self._log_source("video", self.config.source("video", d["source_id"]), d["source_name"], d["title"],
                              status, detail)
@@ -848,7 +852,7 @@ class Engine:
                 self._defer(retry, f"download failed: {err}")
                 if not first.wait_since:
                     self._log_source("video", src, first.source_name, first.title, "waiting",
-                                     "download failed, trying again later")
+                                     "download failed, trying again later", {"video": first.media})
                 return
             for it in group:
                 it.state, it.error = "failed", err

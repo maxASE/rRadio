@@ -1118,14 +1118,15 @@ async def replay_response(info: dict, request: Request):
     if info.get("path"):
         return FileResponse(info["path"])
     media_ref = info["media"]
-    if media_ref.startswith(("http://", "https://")):
+    video = not media_ref.startswith(("http://", "https://"))
+    if not video:
         urls = [media_ref]
     else:  # a video id; AAC (itag 140), because phones can't play WebM/Opus
-        urls = await engine.invidious().audio_urls(media_ref, "140")
+        urls = await engine.invidious().audio_urls(media_ref, "140", phone=True)
     wanted = parse_range(request.headers.get("range"))
     for url in urls:
         try:
-            relay = await relay_in_pieces(url, wanted)
+            relay = await relay_in_pieces(url, wanted, phone=video)
         except (httpx.HTTPError, RuntimeError) as e:
             log.info("listen again: %s failed: %s", url, e)
             continue

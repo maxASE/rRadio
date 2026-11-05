@@ -131,3 +131,27 @@ def test_a_picture_that_failed_once_comes_back_after_a_minute(monkeypatch, tmp_p
         assert cache.path(url) == f"/api/art/{key}"  # one failure: back after a minute
 
     asyncio.run(run())
+
+
+def test_phones_get_no_webm_when_scrolling_back(monkeypatch):
+    """A clip relayed to a phone that comes back as WebM/Opus is passed over (the iPhone
+    would wait in silence); AAC in MP4 is relayed."""
+    from app import sources
+
+    async def handler(req):
+        if "webm" in str(req.url):
+            return httpx.Response(206, content=b"x" * 10, headers={"content-type": "audio/webm",
+                                                                   "content-range": "bytes 0-9/10"})
+        return httpx.Response(206, content=b"y" * 10, headers={"content-type": "audio/mp4",
+                                                               "content-range": "bytes 0-9/10"})
+
+    monkeypatch.setattr(sources, "client", lambda timeout=30: httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+
+    async def run():
+        assert await sources.relay_in_pieces("https://inv.example/webm", None, phone=True) is None
+        assert await sources.relay_in_pieces("https://inv.example/webm", None) is not None  # the web page plays it
+        relay = await sources.relay_in_pieces("https://inv.example/m4a", None, phone=True)
+        assert relay is not None and relay.headers["content-type"] == "audio/mp4"
+        assert b"".join([c async for c in relay.body]) == b"y" * 10
+
+    asyncio.run(run())
