@@ -92,6 +92,12 @@ class Store:
                     "SELECT id, channel FROM history WHERE kind = 'program' AND status = 'ended'"
                 ).fetchall():
                     self._note_program_length(channel, entry_id)
+                # "waiting" lines of lives that have played (or were given up) since, from
+                # before those lines were removed then.
+                self._db.execute(
+                    "DELETE FROM history WHERE kind = 'video' AND status = 'waiting' AND saved = 0 AND EXISTS"
+                    " (SELECT 1 FROM history h WHERE h.kind = 'video' AND h.source = history.source"
+                    " AND h.title = history.title AND h.status != 'waiting' AND h.id > history.id)")
         self.devices = Devices(self._db, self._lock)
         self.sessions = Sessions(self._db, self._lock)
         self.users = Users(self._db, self._lock, os.environ.get("UI_USERNAME", "admin"))
@@ -157,6 +163,14 @@ class Store:
                 "DELETE FROM history WHERE saved = 0 AND (ts < ? OR id NOT IN (SELECT id FROM history ORDER BY id DESC LIMIT 500))",
                 (time.time() - HISTORY_DAYS * 86400,),
             )
+
+    def drop_waiting_entries(self, kind: str, source: str, title: str) -> None:
+        """Removes the "waiting" entries of a clip that has stopped waiting (it plays now, or
+        was given up), so a live shows once in the lists, not again for each step. Saved
+        ones stay."""
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM history WHERE kind = ? AND source = ? AND title = ? AND status = 'waiting'"
+                             " AND saved = 0", (kind, source, title))
 
     def _note_program_length(self, channel: str, until: int | None = None) -> None:
         """Writes the length of a kept program's recording into its "started" entry once the

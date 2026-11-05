@@ -312,12 +312,15 @@ class Invidious:
             art=self.avatar(v.get("authorThumbnails", [])) or self.thumbnail(video_id),
         )
 
-    async def audio_urls(self, video_id: str, itag: str = "140") -> list[str]:
-        """Candidate audio URLs, preferred itag first. All go through Invidious (local=true)."""
+    async def audio_urls(self, video_id: str, itag: str = "140", phone: bool = False) -> list[str]:
+        """Candidate audio URLs, preferred itag first. All go through Invidious (local=true).
+        With `phone` only AAC in MP4: iPhones can't play WebM/Opus, and given one, the player
+        just waits in silence."""
         urls = [f"{self.base}/latest_version?id={video_id}&itag={itag}&local=true"]
+        kind = "audio/mp4" if phone else "audio/"
         try:
             v = await self._get(f"/api/v1/videos/{video_id}", local="true")
-            fmts = [f for f in v.get("adaptiveFormats", []) if str(f.get("type", "")).startswith("audio/")]
+            fmts = [f for f in v.get("adaptiveFormats", []) if str(f.get("type", "")).startswith(kind)]
             fmts.sort(key=lambda f: (str(f.get("itag")) != itag, -int(f.get("bitrate") or 0)))
             for f in fmts:
                 u = f.get("url", "")
@@ -499,12 +502,16 @@ def parse_range(value: str | None) -> tuple[int, int | None] | None:
     return int(m[1]), int(m[2]) if m[2] else None
 
 
-async def relay_in_pieces(url: str, wanted: tuple[int, int | None] | None) -> Relay | None:
+PHONE_UNPLAYABLE = ("webm", "ogg", "opus")
+
+
+async def relay_in_pieces(url: str, wanted: tuple[int, int | None] | None, phone: bool = False) -> Relay | None:
     """Fetches `url` (the bytes in `wanted`, or all of it) for passing on to a listener.
     The video site sends a long Range at about playback speed, so a 40-minute clip downloaded
     in one request takes many minutes; small ranges come fast. So the bytes are fetched
     in CHUNK pieces, PIECES_AHEAD at a time, and passed on in order, as one answer.
-    None when the URL doesn't answer with 200 or 206."""
+    None when the URL doesn't answer with 200 or 206, or with `phone` when the answer is
+    a format phones can't play."""
     start, end = wanted or (0, None)
     c = client(timeout=60)
     try:
@@ -514,8 +521,9 @@ async def relay_in_pieces(url: str, wanted: tuple[int, int | None] | None) -> Re
     except BaseException:
         await c.aclose()
         raise
-    if r.status_code not in (200, 206):
-        log.info("listen again: %s answered %s", url, r.status_code)
+    content_type = r.headers.get("content-type", "").lower()
+    if r.status_code not in (200, 206) or (phone and any(k in content_type for k in PHONE_UNPLAYABLE)):
+        log.info("listen again: %s answered %s %s", url, r.status_code, content_type)
         await r.aclose()
         await c.aclose()
         return None

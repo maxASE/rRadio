@@ -712,6 +712,7 @@ class Engine:
     def _wait_drop(self, key: str, d: dict, status: str = "", detail: str = "") -> None:
         if self.store.wait_drop(key):
             self._waiting_rev += 1
+        self.store.drop_waiting_entries("video", d["source_name"], d["title"])
         if status:
             self._log_source("video", self.config.source("video", d["source_id"]), d["source_name"], d["title"],
                              status, detail)
