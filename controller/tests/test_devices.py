@@ -183,3 +183,15 @@ def test_hello_proves_the_radio_without_the_key(admin, anon):
     assert r.json() == {"rradio": True, "proof": hmac.new(key, nonce.encode(), hashlib.sha256).hexdigest()}
     assert anon.get("/api/hello", params={"device": "nope", "nonce": nonce}).status_code == 404
     assert anon.get("/api/hello", params={"device": d["device"]["id"], "nonce": "short"}).status_code == 400
+
+
+def test_review_code_pairs_again_and_again(app_main, anon, monkeypatch):
+    monkeypatch.setattr(app_main.devices, "review_code", "APPREVIEW1")
+    for _ in range(2):
+        r = anon.post("/api/pair", json={"code": "app-review-1", "device_name": "Reviewer"})
+        assert r.status_code == 200, r.text
+        assert r.json()["device"]["role"] == "member"
+        auth = {"Authorization": f"Bearer {r.json()['token']}"}
+        assert anon.get("/api/config", headers=auth).status_code == 403
+    monkeypatch.setattr(app_main.devices, "review_code", "")
+    assert anon.post("/api/pair", json={"code": "APPREVIEW1"}).status_code == 404
