@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import secrets
 import sqlite3
 import threading
@@ -69,6 +70,11 @@ class Devices:
         self._db, self._lock = db, lock
         self._pairings: dict[str, Pairing] = {}
         self._failures: list[float] = []
+        # A fixed code that pairs any number of phones as admin devices and never expires,
+        # for a demo radio the App Store reviewers use (REVIEW_PAIRING_CODE, 8+ letters).
+        # Never set it on a radio with real people's data.
+        code = self._norm(os.environ.get("REVIEW_PAIRING_CODE", ""))
+        self.review_code = code if len(code) >= 8 else ""
         with self._lock, self._db:
             self._db.execute(
                 """CREATE TABLE IF NOT EXISTS devices (
@@ -176,7 +182,10 @@ class Devices:
         if len(self._failures) >= 20:
             raise PermissionError("too many wrong codes, wait a minute")
         self._expire()
-        p = self._pairings.pop(self._norm(code), None)
+        if self.review_code and self._norm(code) == self.review_code:
+            p = Pairing(code="", name="Review phone", role="admin", channels=[], expires=now, user_id="")
+        else:
+            p = self._pairings.pop(self._norm(code), None)
         if p is None:
             self._failures.append(now)
             raise LookupError("unknown or expired pairing code")
