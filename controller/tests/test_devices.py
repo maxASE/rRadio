@@ -195,3 +195,18 @@ def test_review_code_pairs_again_and_again(app_main, anon, monkeypatch):
         assert anon.get("/api/config", headers=auth).status_code == 403
     monkeypatch.setattr(app_main.devices, "review_code", "")
     assert anon.post("/api/pair", json={"code": "APPREVIEW1"}).status_code == 404
+
+
+def test_health_without_video_source_is_fine(admin, app_main, monkeypatch):
+    """A radio of stations and podcasts only (no video source address) isn't flagged."""
+    calls = []
+
+    async def get(self, url, **kw):
+        calls.append(url)
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+    monkeypatch.setattr(app_main, "_invidious_check", (0.0, {}))
+    monkeypatch.setattr(app_main.store.config.settings, "invidious_url", "")
+    h = admin.get("/api/health").json()
+    assert h["invidious"] == {"ok": True, "off": True} and calls == []
