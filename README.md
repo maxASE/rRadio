@@ -35,7 +35,7 @@ channel and stream link.
 
 ```
  radio station / music server ─┐
- scheduled show               ─┤                         ┌─► /radio.mp3   (channel 1)
+ scheduled show               ─┤                          ┌─► /radio.mp3   (channel 1)
  new videos                   ─┼─► Liquidsoap ─► Icecast ─┼─► /anna.mp3    (channel 2)
  podcast episodes             ─┤   (one mix per           └─► /….aac, /….opus ─► VLC, Home Assistant,
  news, jingles, own spots     ─┘    channel)                                     phones, speakers…
