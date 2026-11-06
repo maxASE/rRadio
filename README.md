@@ -7,6 +7,7 @@
   <img src="https://img.shields.io/badge/python-3.13-3776AB?logo=python&logoColor=white" alt="Python 3.13">
   <img src="https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white" alt="Docker Compose">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT license"></a>
+  <a href="https://rradio.app"><img src="https://img.shields.io/badge/app-rradio.app-FF7A1A" alt="Phone app: rradio.app"></a>
 </p>
 
 <p align="center"><b>A self-hosted internet radio that cuts new episodes, videos and news into the station you already listen to.</b></p>
@@ -30,6 +31,13 @@ channel and stream link.
 - **Explains itself:** every channel page says *why* it plays what it plays, and keeps a history you can listen back to.
 - **Users and devices:** per-person channels and sources, device keys with QR pairing, a JSON API with tests, and a live event feed for the companion apps.
 - **Light on the home server:** three small containers, downloads kept on a RAM disk, about 120 MB of RAM in total.
+
+## Phone app
+
+The rRadio app for iPhone and Android plays your channels at home and on the go, shows
+what's on and what's next, lets you listen again, sends voice messages to a channel and
+wakes you with your radio. It pairs with your server by QR code and talks only to it.
+More at **[rradio.app](https://rradio.app)**.
 
 ## How it works
 
