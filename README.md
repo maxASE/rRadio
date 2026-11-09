@@ -60,7 +60,7 @@ More at **[rradio.app](https://rradio.app)**.
 | Streaming | Icecast 2.4 |
 | Web UI | Plain HTML, CSS and JavaScript, no build step |
 | Deployment | Docker Compose, images for amd64 and arm64 |
-| CI | GitHub Actions on a self-hosted runner: Liquidsoap script check, 85 API tests, Compose check, image build |
+| CI | GitHub Actions on GitHub-hosted runners: Liquidsoap script check, 85 API tests, Compose check, image build |
 
 ## Quick start
 
