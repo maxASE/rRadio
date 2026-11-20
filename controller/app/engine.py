@@ -1683,32 +1683,66 @@ class Engine:
             "time": self.now().isoformat(),
         }
 
-    def widget(self, cid: str | None) -> dict:
-        """Flat summary for dashboards such as Homepage's customapi widget."""
-        ch = self.config.channel(cid) or self.config.channel(None)
-        st = self.status(cid)
-        now = st["now"]
+    def widget(self, cid: str | None, all_channels: bool = False) -> dict:
+        """Flat summary for dashboards such as Homepage's customapi widget.
+
+        Anyone who can see the dashboard sees it, so by default it only tells whether
+        the radio is healthy: on air or silent, clips queued, RAM disk use and how many
+        listen. What is playing (and the last cut-in and next program) is added only
+        with the widget_show_playing setting. With all_channels it adds up every
+        channel; otherwise it describes the one channel."""
+        cfg = self.config
+        ch = cfg.channel(cid) or cfg.channel(None)
+        chans = list(cfg.channels) if all_channels else ([ch] if ch else [])
+        ids = {c.id for c in chans}
+        modes = {c.id: self.now_playing(c)["mode"] for c in chans}
+        silent = [c for c in chans if modes[c.id] in ("silence", "offline")]
+        if not chans or not self.liq_up:
+            status = "Offline"
+        elif not silent:
+            status = "On air"
+        elif len(chans) == 1:
+            status = "Silent"
+        else:
+            status = f"Silent: {len(silent)} of {len(chans)}"
+        queue = [i for i in self.items if i.channel in ids and i.state not in ("playing", "failed")]
+        counts = [self.state(c.id).listeners for c in chans]
+        ram = ram_usage()
+        pct = round(ram["used"] * 100 / ram["size"]) if ram and ram["size"] else None
+        out = {
+            "status": status,
+            "queue": len(queue),
+            "downloading": sum(1 for i in queue if i.state in ("waiting", "downloading")),
+            "ram": "" if pct is None else f"{pct}%" + (" ⚠" if ram["low"] else ""),
+            "ram_percent": pct,
+            "ram_low": bool(ram and ram["low"]),
+            "listeners": None if any(n is None for n in counts) else sum(counts),
+            "channels": len(chans),
+            "station": cfg.settings.station_name if all_channels or not ch else ch.name,
+        }
+        if cfg.settings.widget_show_playing and ch:
+            out.update(self._widget_playing(ch))
+        return out
+
+    def _widget_playing(self, ch: Channel) -> dict:
+        """What one channel is playing, for the widget when widget_show_playing is on."""
+        now = self.now_playing(ch)
         labels = {"cutin": "Cut-in", "program": "Program", "station": "Radio", "silence": "Silence", "offline": "Offline"}
         title = " - ".join(x for x in (now.get("artist"), now.get("title")) if x)
-        mine = [i for i in self.items if ch and i.channel == ch.id]
-        queue = [i for i in mine if i.state not in ("playing", "failed")]
+        mine = [i for i in self.items if i.channel == ch.id]
         last = next((i for i in mine if i.state == "playing"), None)
         if last:
             last_cutin = {"source": last.source_name, "title": last.title, "ts": last.pushed_at}
         else:
-            last_cutin = self.store.last_cutin(ch.id if ch else None)
+            last_cutin = self.store.last_cutin(ch.id)
         tz = self.config.settings.tz
-        nxt = st.get("next_program")
+        nxt = next_program(ch, self.now())
         return {
-            "status": labels.get(now["mode"], now["mode"]),
+            "mode": labels.get(now["mode"], now["mode"]),
             "on_air": now.get("source") or "",
             "title": title or now.get("source") or "",
-            "queue": len(queue),
-            "downloading": sum(1 for i in queue if i.state in ("waiting", "downloading")),
-            "listeners": st.get("listeners"),
             "last_cutin": f"{last_cutin['source']}: {last_cutin['title']}" if last_cutin else "",
             "last_cutin_at": datetime.fromtimestamp(last_cutin["ts"], tz).isoformat() if last_cutin else None,
             "next_program": nxt["name"] if nxt else "",
             "next_program_at": nxt["start"] if nxt else None,
-            "station": ch.name if ch else self.config.settings.station_name,
         }

@@ -402,7 +402,8 @@ async def widget(channel: str | None = None):
     """Read-only summary for dashboards (e.g. Homepage's customapi widget)."""
     a = acc()
     if a.admin or a.anonymous:  # anonymous only with WIDGET_PUBLIC, which opens it on purpose
-        return engine.widget(channel)
+        # Without ?channel= it adds up all channels: the whole radio at a glance.
+        return engine.widget(channel, all_channels=not channel)
     return engine.widget(listen_channel(channel).id)
 
 

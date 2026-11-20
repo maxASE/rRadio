@@ -2041,6 +2041,7 @@ $("#form-settings").addEventListener("submit", (ev) => {
     video_audio: f.video_audio.value,
     cache_in_ram: f.cache_in_ram.checked,
     replay_keep: f.replay_keep.checked,
+    widget_show_playing: f.widget_show_playing.checked,
     navidrome_url: f.navidrome_url.value,
     navidrome_user: f.navidrome_user.value,
     navidrome_password: f.navidrome_password.value,
