@@ -253,6 +253,9 @@ class Settings(BaseModel):
     # from the history. Other clips are fetched again from their source when asked.
     replay_keep: bool = True
     streams: list[str] = Field(default_factory=lambda: ["mp3"])
+    # Show what is playing on the dashboard widget (/api/widget). Off by default:
+    # anyone who can see the dashboard would see what the household listens to.
+    widget_show_playing: bool = False
     # Navidrome (or any Subsonic server). The password may also come from
     # NAVIDROME_PASSWORD in .env, which keeps it out of this file.
     navidrome_url: str = os.environ.get("NAVIDROME_URL", "")

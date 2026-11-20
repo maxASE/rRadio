@@ -484,25 +484,38 @@ so it is not held back; no proxy changes are needed.
 
 ## Homepage dashboard widget
 
-[Homepage](https://gethomepage.dev) can show what is on air with its built-in
-`customapi` widget; nothing extra to install. rRadio serves a small read-only
-summary at `/api/widget`:
+[Homepage](https://gethomepage.dev) can show how the radio is doing with its
+built-in `customapi` widget; nothing extra to install. rRadio serves a small
+read-only summary at `/api/widget`:
 
 ```json
-{"status": "Cut-in", "on_air": "Tagesschau", "title": "tagesschau 12:00 Uhr",
- "queue": 2, "downloading": 1, "listeners": 3,
- "last_cutin": "Tagesschau: tagesschau 12:00 Uhr", "last_cutin_at": "2026-10-21T12:00:41+02:00",
- "next_program": "Morning show", "next_program_at": "2026-10-22T07:00:00+02:00",
- "station": "rRadio"}
+{"status": "On air", "queue": 2, "downloading": 1,
+ "ram": "38%", "ram_percent": 38, "ram_low": false,
+ "listeners": 3, "channels": 2, "station": "rRadio"}
 ```
 
-`status` is `Radio`, `Cut-in`, `Program`, `Silence` or `Offline`. `queue`
-counts clips waiting to play (including ones still downloading). It describes
-the first channel; add its stream name for another one, e.g.
+- `status` is `On air` when every channel sends audio, `Silent` (or
+  `Silent: 1 of 3`) when a channel's station or music server sends nothing, and
+  `Offline` when the audio engine is down.
+- `queue` counts clips waiting to play (including ones still downloading).
+- `ram` is how full the RAM disk (`RAM_CACHE_SIZE`) is, with a ⚠ added when it
+  is nearly full; `ram_percent` and `ram_low` give the same as a number and a
+  yes/no. Empty without a RAM disk.
+- `listeners` is the number of people listening, with no names or streams.
+
+By default it adds up all channels. Add a stream name for one channel, e.g.
 `/api/widget?channel=anna`.
 
+The widget does not say what is playing, because anyone who can see your
+dashboard would see what the household listens to. To show it anyway, tick
+**Show what is playing on the dashboard widget** under Settings. Then the
+widget also has `title`, `on_air` (the station or source), `mode` (`Radio`,
+`Cut-in`, `Program`, `Silence`), `last_cutin`, `last_cutin_at`, `next_program`
+and `next_program_at`, for the first channel or the one in `?channel=`.
+
 Add this to Homepage's `services.yaml`, with `url` pointing at rRadio's web UI
-(`http://<server>:8080`, or your nginx hostname):
+(`http://<server>:8080`, or your nginx hostname). It shows four tiles side by
+side:
 
 ```yaml
 - Media:
@@ -516,28 +529,22 @@ Add this to Homepage's `services.yaml`, with `url` pointing at rRadio's web UI
           refreshInterval: 15000
           # username: admin        # only if UI_PASSWORD is set
           # password: your-ui-password
-          display: list
           mappings:
             - field: status
-              label: On air
-            - field: title
-              label: Playing
+              label: Status
             - field: queue
               label: Queue
               format: number
+            - field: ram
+              label: RAM
             - field: listeners
               label: Listeners
               format: number
-            - field: last_cutin
-              label: Last cut-in
-            - field: last_cutin_at
-              label: Cut in
-              format: relativeDate
-            - field: next_program
-              label: Next program
 ```
 
-Drop `display: list` for the compact block view, which fits about four fields.
+Homepage's tiles hold about four fields. For more, add `display: list` to get
+one row per field; with the setting above ticked, `title` and `next_program`
+fit well there.
 
 If `UI_PASSWORD` is set, either fill in `username`/`password` above (Homepage
 sends them as Basic auth), or set `WIDGET_PUBLIC=true` in `.env` so only
