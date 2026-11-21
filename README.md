@@ -39,6 +39,11 @@ what's on and what's next, lets you listen again, sends voice messages to a chan
 wakes you with your radio. It pairs with your server by QR code and talks only to it.
 More at **[rradio.app](https://rradio.app)**.
 
+<p>
+  <a href="https://apps.apple.com/us/app/rradio-self-hosted-radio/id6829921220"><img src="https://tools.applemarketingtools.com/api/badges/download-on-the-app-store/black/en-us?size=250x83" alt="Download on the App Store" height="50" align="middle"></a>
+  <a href="https://play.google.com/store/apps/details?id=com.mobileintelligencese.rradio"><img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" height="74" align="middle"></a>
+</p>
+
 ## How it works
 
 ```
